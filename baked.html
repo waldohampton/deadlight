@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>DEADLIGHT baked lightmap test</title>
+<style>
+  html,body{margin:0;height:100%;background:#07080a;overflow:hidden;
+    font-family:"Cascadia Mono",Consolas,monospace;color:#d8d5c8;}
+  #v{position:fixed;top:0;left:0;width:100%;height:100%;display:block;}
+  #vig{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at 50% 48%,rgba(0,0,0,0) 40%,rgba(0,0,0,.55) 100%);}
+  #cap{position:fixed;left:22px;bottom:20px;font-size:10px;letter-spacing:2px;
+    color:rgba(216,213,200,.45);text-transform:uppercase;line-height:2;pointer-events:none;}
+  #load{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:#07080a;font-size:11px;letter-spacing:4px;color:#6b7164;transition:opacity .5s;}
+  #btn{position:fixed;right:22px;bottom:20px;z-index:5;background:none;border:1px solid rgba(255,179,71,.45);
+    color:#ffb347;font:inherit;font-size:9px;letter-spacing:2px;padding:8px 12px;cursor:pointer;}
+</style>
+</head>
+<body>
+<canvas id="v"></canvas>
+<div id="vig"></div>
+<div id="cap">DEADLIGHT / BAKED GI TEST<br>CYCLES LIGHTMAPS · 512PX · REAL-TIME TORCH ON TOP</div>
+<button id="btn">TOGGLE LIGHTMAP</button>
+<div id="load">BAKING</div>
+<script src="three.min.js"></script>
+<script src="GLTFLoader.js"></script>
+<script>
+(function(){
+'use strict';
+if (typeof THREE === 'undefined') { document.getElementById('load').textContent = 'three.js missing'; return; }
+
+var canvas = document.getElementById('v');
+var renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0c10);
+scene.fog = new THREE.Fog(0x0a0c10, 18, 46);
+
+var camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.05, 120);
+camera.position.set(2.6, 1.62, 5.4);
+camera.lookAt(-0.4, 1.55, -6.6);
+
+// the real-time part: a torch the player carries, on top of baked GI
+var torch = new THREE.SpotLight(0xffd9a8, 2.4, 22, 0.55, 0.7, 1.2);
+torch.position.set(0.1, -0.05, 0.1);
+torch.target.position.set(0, -0.4, -6);
+camera.add(torch);
+camera.add(torch.target);
+scene.add(camera);
+
+var amb = new THREE.AmbientLight(0x2a3548, 0.22);
+scene.add(amb);
+
+var meshes = [];
+var lightmaps = {};
+var useLM = true;
+
+var loader = new THREE.GLTFLoader();
+loader.load('bake/baked.glb', function(gltf){
+  scene.add(gltf.scene);
+  gltf.scene.traverse(function(o){
+    if (!o.isMesh) return;
+    meshes.push(o);
+    o.receiveShadow = true;
+    o.material.roughness = 0.9;
+    o.material.metalness = 0.0;
+    var g = o.geometry;
+    if (g.attributes.uv && !g.attributes.uv2) g.setAttribute('uv2', g.attributes.uv);
+  });
+
+  var names = [];
+  gltf.scene.traverse(function(o){ if (o.isMesh) names.push(o.name); });
+
+  var pending = names.length;
+  names.forEach(function(n){
+    var t = new THREE.TextureLoader().load('bake/' + n + '_lm.png', function(){
+      t.encoding = THREE.sRGBEncoding;
+      lightmaps[n] = t;
+      pending--;
+      if (pending === 0) applyLightmaps();
+    });
+  });
+
+  function applyLightmaps(){
+    meshes.forEach(function(m){
+      var t = lightmaps[m.name];
+      if (!t) {
+        console.warn('no lightmap for', m.name);
+        return;
+      }
+      m.material.lightMap = t;
+      m.material.lightMapIntensity = 1.35;
+      m.material.needsUpdate = true;
+    });
+    document.getElementById('load').style.opacity = '0';
+    setTimeout(function(){ document.getElementById('load').style.display = 'none'; }, 600);
+    window.BAKED = { ready: true, count: meshes.length, missing: names.filter(function(n){ return !lightmaps[n]; }) };
+  }
+}, undefined, function(err){
+  document.getElementById('load').textContent = 'GLB FAILED TO LOAD';
+  console.error(err);
+});
+
+document.getElementById('btn').addEventListener('click', function(){
+  useLM = !useLM;
+  meshes.forEach(function(m){
+    m.material.lightMap = useLM ? lightmaps[m.name] : null;
+    m.material.needsUpdate = true;
+  });
+  this.textContent = useLM ? 'LIGHTMAP ON' : 'LIGHTMAP OFF';
+});
+
+window.addEventListener('resize', function(){
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+});
+
+function loop(){
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script>
+</body>
+</html>

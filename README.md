@@ -1,10 +1,14 @@
 # DEADLIGHT
 
+**Version 1.0.0**
+
 First-person chase game. You wake up in a concrete maze. Something is in there with
 you and it knows roughly where you are. Find the lit EXIT door, go through it, get a
 bigger maze and a faster thing.
 
 No assets, no build step. Two files: `index.html` and `three.min.js` (r128, MIT).
+
+Live: https://waldohampton.github.io/deadlight/
 
 ## Run it
 
@@ -54,3 +58,11 @@ Phone
   design, not textures.
 - The thing pathfinds, it does not see. It always knows your cell.
 - No jump, crouch, doors or keys yet.
+
+## Changelog
+
+**1.0.0**
+- First release: procedural maze, hunting chaser, breath/sprint noise mechanic,
+  exit per sector, death and escape states.
+- Desktop keyboard with pointer-lock look, phone joystick, drag look and tilt steering.
+- Fixed: opaque fade overlay covered the title menu and made the first frame black.

@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>DEADLIGHT look test</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0d0a;overflow:hidden;
+    font-family:"Cascadia Mono",Consolas,monospace;color:#d8d5c8;}
+  #v{position:fixed;top:0;left:0;width:100%;height:100%;display:block;}
+  #cap{position:fixed;left:24px;bottom:24px;font-size:10px;letter-spacing:2px;
+    color:rgba(216,213,200,.5);text-transform:uppercase;line-height:2;pointer-events:none;}
+  #hint{position:fixed;right:24px;bottom:24px;font-size:10px;letter-spacing:2px;
+    color:rgba(216,213,200,.35);text-transform:uppercase;pointer-events:none;text-align:right;}
+  #load{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:#0b0d0a;font-size:11px;letter-spacing:4px;color:#6b7164;transition:opacity .6s;}
+  #vig{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at 50% 48%,rgba(0,0,0,0) 42%,rgba(0,0,0,.45) 100%);}
+</style>
+</head>
+<body>
+<canvas id="v"></canvas>
+<div id="vig"></div>
+<div id="cap">DEADLIGHT / LOOK TEST 02<br>POLY HAVEN CC0 MATERIALS</div>
+<div id="hint">DRAG TO LOOK</div>
+<div id="load">BUILDING WORLD</div>
+<script src="three.min.js"></script>
+<script src="RGBELoader.js"></script>
+<script>
+(function(){
+'use strict';
+if (typeof THREE === 'undefined') { document.getElementById('load').textContent = 'three.js missing'; return; }
+
+var canvas = document.getElementById('v');
+var renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true, powerPreference:'high-performance'});
+var DPR = Math.min(window.devicePixelRatio || 1, 2);
+renderer.setPixelRatio(DPR);
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+var scene = new THREE.Scene();
+var camera = new THREE.PerspectiveCamera(52, window.innerWidth/window.innerHeight, 0.05, 220);
+
+var FOG = new THREE.Color(0x7d8778);
+scene.fog = new THREE.FogExp2(FOG.getHex(), 0.032);
+scene.background = FOG.clone();
+
+var manager = new THREE.LoadingManager();
+var texLoader = new THREE.TextureLoader(manager);
+var rgbe = new THREE.RGBELoader(manager);
+
+function loadTex(url, srgb, rep){
+  var t = texLoader.load(url);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  if (srgb) t.encoding = THREE.sRGBEncoding;
+  if (rep) t.repeat.set(rep[0], rep[1]);
+  return t;
+}
+
+var T = {
+  groundD: loadTex('looktex/forest_ground_04_diff_2k.jpg', true, [7,7]),
+  groundN: loadTex('looktex/forest_ground_04_nor_gl_2k.jpg', false, [7,7]),
+  stoneD:  loadTex('looktex/mossy_stone_wall_diff_2k.jpg', true, [1.1,1.1]),
+  stoneN:  loadTex('looktex/mossy_stone_wall_nor_gl_2k.jpg', false, [1.1,1.1]),
+  barkD:   loadTex('looktex/bark_brown_02_diff_1k.jpg', true, [1,3]),
+  barkN:   loadTex('looktex/bark_brown_02_nor_gl_1k.jpg', false, [1,3])
+};
+
+rgbe.load('looktex/env.hdr', function(hdr){
+  hdr.mapping = THREE.EquirectangularReflectionMapping;
+  var pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  scene.environment = pmrem.fromEquirectangular(hdr).texture;
+  hdr.dispose();
+  pmrem.dispose();
+});
+
+// ---------------------------------------------------------------- lights
+var sun = new THREE.DirectionalLight(0xffb877, 3.4);
+sun.position.set(-13, 5.5, -30);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -22; sun.shadow.camera.right = 22;
+sun.shadow.camera.top = 22; sun.shadow.camera.bottom = -22;
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 80;
+sun.shadow.bias = -0.0008;
+sun.shadow.normalBias = 0.04;
+scene.add(sun);
+scene.add(sun.target);
+
+scene.add(new THREE.HemisphereLight(0x9fb4c4, 0x24261a, 0.5));
+
+var fill = new THREE.PointLight(0xa8c47e, 0.35, 14, 2);
+fill.position.set(1.5, 0.5, 2.5);
+scene.add(fill);
+
+// ---------------------------------------------------------------- ground
+var ground = new THREE.Mesh(
+  new THREE.CircleGeometry(46, 64),
+  new THREE.MeshStandardMaterial({
+    map: T.groundD, normalMap: T.groundN,
+    normalScale: new THREE.Vector2(1.4, 1.4),
+    roughness: 1, metalness: 0, color: 0x9fa694
+  })
+);
+ground.rotation.x = -Math.PI/2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+var puddleMat = new THREE.MeshStandardMaterial({
+  color: 0x232a20, roughness: 0.05, metalness: 0, envMapIntensity: 1.8,
+  transparent: true, opacity: 0.92
+});
+[[-2.6,2.4,1.7],[1.9,3.6,1.1],[0.2,-1.6,2.1],[-4.4,-3.1,1.0]].forEach(function(p){
+  var m = new THREE.Mesh(new THREE.CircleGeometry(p[2], 28), puddleMat);
+  m.rotation.x = -Math.PI/2;
+  m.position.set(p[0], 0.011, p[1]);
+  scene.add(m);
+});
+
+// ---------------------------------------------------------------- stone
+var stoneMat = new THREE.MeshStandardMaterial({
+  map: T.stoneD, normalMap: T.stoneN, normalScale: new THREE.Vector2(1.2,1.2),
+  roughness: 0.9, metalness: 0, color: 0x9ea394
+});
+function block(x,y,z,w,h,d,rx,ry,rz){
+  var m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), stoneMat);
+  m.position.set(x,y,z);
+  m.rotation.set(rx||0, ry||0, rz||0);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m); return m;
+}
+// arch
+block(-2.2, 2.15, -6.2, 1.15, 4.3, 1.15, 0, 0.05, 0.015);
+block( 2.2, 2.15, -6.2, 1.15, 4.3, 1.15, 0, -0.035, -0.02);
+block( 0, 4.55, -6.2, 5.7, 0.9, 1.25, 0, 0, 0.008);
+block( 0, 5.3, -6.25, 1.4, 0.55, 1.0, 0.03, 0.22, 0);
+// side walls
+block(-4.7, 1.05, -4.4, 0.95, 2.1, 4.6, 0, 0.24, 0.03);
+block(-6.4, 0.62, -1.2, 0.9, 1.25, 3.4, 0, 0.52, 0.05);
+block( 4.6, 1.4, -3.6, 1.0, 2.8, 3.8, 0, -0.2, 0);
+block( 6.5, 0.8, 0.4, 0.95, 1.6, 2.7, 0.03, -0.44, 0);
+// rubble
+block(-3.2, 0.3, 1.4, 1.8, 0.6, 1.3, 0.09, 0.5, 0.05);
+block( 3.0, 0.26, 2.6, 1.5, 0.52, 1.15, -0.05, -0.72, 0.02);
+block(-1.1, 0.2, 4.6, 1.25, 0.4, 0.95, 0.02, 0.9, 0.03);
+
+// ---------------------------------------------------------------- procedural leaf cards
+function leafClusterTexture(){
+  var s = 512, cv = document.createElement('canvas');
+  cv.width = cv.height = s;
+  var x = cv.getContext('2d');
+  x.clearRect(0,0,s,s);
+  for (var i = 0; i < 130; i++){
+    var a = Math.random()*Math.PI*2;
+    var r = Math.pow(Math.random(), 0.55) * s*0.44;
+    var cx = s/2 + Math.cos(a)*r;
+    var cy = s/2 + Math.sin(a)*r*0.92;
+    var len = 20 + Math.random()*26;
+    var wid = len*(0.30 + Math.random()*0.16);
+    x.save();
+    x.translate(cx, cy);
+    x.rotate(Math.random()*Math.PI*2);
+    x.beginPath();
+    x.ellipse(0, 0, wid, len*0.5, 0, 0, Math.PI*2);
+    x.fillStyle = 'hsl(' + (68 + Math.random()*44) + ',' + (26 + Math.random()*28) + '%,' + (11 + Math.random()*21) + '%)';
+    x.fill();
+    x.restore();
+  }
+  var t = new THREE.CanvasTexture(cv);
+  t.encoding = THREE.sRGBEncoding;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+
+var clusterTex = leafClusterTexture();
+var cardMat = new THREE.MeshStandardMaterial({
+  map: clusterTex, alphaTest: 0.42, side: THREE.DoubleSide,
+  roughness: 0.92, metalness: 0, color: 0xb9c79a
+});
+var cardGeo = new THREE.PlaneGeometry(1,1);
+
+// collect every foliage card into one instanced mesh
+var cards = [];
+function addCard(x,y,z, size, rx, ry, rz, sy){
+  cards.push({x:x,y:y,z:z,s:size,rx:rx,ry:ry,rz:rz,sy:sy||1});
+}
+
+var barkMat = new THREE.MeshStandardMaterial({
+  map: T.barkD, normalMap: T.barkN, normalScale: new THREE.Vector2(1.5,1.5),
+  roughness: 1, metalness: 0, color: 0xa79b86
+});
+var shadowMat = new THREE.MeshBasicMaterial({colorWrite:false, depthWrite:false});
+
+var trees = [
+  [-8.6,-13, 1.2], [-4.6,-17, 1.05], [8.2,-14, 1.3], [4.4,-20, 1.1],
+  [-13.4,-2, 1.0], [12.6,-1.5, 1.15], [-10.6, 7.2, 0.95], [15.4, 8.0, 1.05],
+  [0.6,-24, 1.25], [-17.5,-9, 1.1]
+];
+
+trees.forEach(function(tr){
+  var x = tr[0], z = tr[1], sc = tr[2];
+  var h = 8.6 * sc;
+  var g = new THREE.Group();
+  var trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14*sc, 0.46*sc, h, 10, 1), barkMat);
+  trunk.position.y = h/2;
+  trunk.castShadow = true; trunk.receiveShadow = true;
+  g.add(trunk);
+
+  for (var b = 0; b < 3; b++){
+    var br = new THREE.Mesh(new THREE.CylinderGeometry(0.05*sc, 0.13*sc, 3.2*sc, 6), barkMat);
+    br.position.set(Math.cos(b*2.1)*0.55*sc, h*(0.6 + b*0.09), Math.sin(b*2.1)*0.55*sc);
+    br.rotation.z = Math.cos(b*2.1)*0.85;
+    br.rotation.x = Math.sin(b*2.1)*0.85;
+    br.castShadow = true;
+    g.add(br);
+  }
+  g.position.set(x, 0, z);
+  g.rotation.y = Math.random()*6.28;
+  scene.add(g);
+
+  // canopy cards
+  var cy = h*0.82, rx = 3.3*sc, ry = 2.3*sc;
+  for (var i = 0; i < 42; i++){
+    var a = Math.random()*Math.PI*2;
+    var rr = Math.pow(Math.random(), 0.5);
+    var px = x + Math.cos(a)*rr*rx;
+    var pz = z + Math.sin(a)*rr*rx;
+    var py = cy + (Math.random()-0.5)*ry*1.4;
+    addCard(px, py, pz, (1.5 + Math.random()*1.5)*sc,
+            Math.random()*3.14, Math.random()*3.14, Math.random()*3.14, 0.8 + Math.random()*0.5);
+  }
+  // invisible shadow caster so the canopy still darkens the ground
+  var sh = new THREE.Mesh(new THREE.IcosahedronGeometry(rx*0.85, 1), shadowMat);
+  sh.position.set(x, cy, z);
+  sh.scale.set(1, 0.55, 1);
+  sh.castShadow = true;
+  scene.add(sh);
+});
+
+// ground shrubs
+for (var s2 = 0; s2 < 14; s2++){
+  var sa = Math.random()*6.28, sr = 2.2 + Math.random()*13;
+  var sx = Math.cos(sa)*sr, sz = Math.sin(sa)*sr - 3;
+  for (var c2 = 0; c2 < 9; c2++){
+    addCard(sx + (Math.random()-0.5)*1.3, 0.25 + Math.random()*0.75,
+            sz + (Math.random()-0.5)*1.3, 0.55 + Math.random()*0.55,
+            (Math.random()-0.5)*0.7, Math.random()*3.14, (Math.random()-0.5)*0.7, 1);
+  }
+}
+
+// vines hanging off the lintel
+for (var v = 0; v < 34; v++){
+  var vx = -2.7 + Math.random()*5.4;
+  var vlen = 0.9 + Math.random()*1.9;
+  addCard(vx, 4.5 - vlen*0.5, -5.55, 0.5 + Math.random()*0.35,
+          0, Math.random()*3.14, (Math.random()-0.5)*0.25, vlen*1.5);
+}
+
+var foliage = new THREE.InstancedMesh(cardGeo, cardMat, cards.length);
+var cM = new THREE.Matrix4(), cQ = new THREE.Quaternion(), cV = new THREE.Vector3(), cS = new THREE.Vector3();
+var cE = new THREE.Euler();
+cards.forEach(function(c, i){
+  cV.set(c.x, c.y, c.z);
+  cE.set(c.rx, c.ry, c.rz);
+  cQ.setFromEuler(cE);
+  cS.set(c.s, c.s*c.sy, c.s);
+  cM.compose(cV, cQ, cS);
+  foliage.setMatrixAt(i, cM);
+});
+foliage.instanceMatrix.needsUpdate = true;
+foliage.castShadow = false;
+foliage.receiveShadow = false;
+scene.add(foliage);
+
+// ---------------------------------------------------------------- grass
+var bladeGeo = (function(){
+  var g = new THREE.BufferGeometry();
+  var w = 0.038, h = 0.62;
+  var pos = new Float32Array([
+    -w,0,0,  w,0,0,
+    -w*0.62,h*0.55,0.02,  w*0.62,h*0.55,0.02,
+    -w*0.16,h,0.06,  w*0.16,h,0.06
+  ]);
+  var uv = new Float32Array([0,0, 1,0, 0,0.55, 1,0.55, 0,1, 1,1]);
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv,2));
+  g.setIndex([0,1,2, 2,1,3, 2,3,4, 4,3,5]);
+  g.computeVertexNormals();
+  return g;
+})();
+
+var GRASS_COUNT = window.innerWidth < 800 ? 2600 : 9000;
+var windUniform = { value: 0 };
+var grassMat = new THREE.MeshStandardMaterial({
+  color: 0x6d8244, roughness: 0.88, metalness: 0, side: THREE.DoubleSide
+});
+grassMat.onBeforeCompile = function(shader){
+  shader.uniforms.uTime = windUniform;
+  shader.vertexShader = 'uniform float uTime;\n' + shader.vertexShader.replace(
+    '#include <begin_vertex>',
+    [
+      'vec3 transformed = vec3(position);',
+      'float seed = instanceMatrix[3][0] * 0.37 + instanceMatrix[3][2] * 0.71;',
+      'float sway = sin(uTime * 1.4 + seed) * 0.5 + sin(uTime * 3.1 + seed * 1.7) * 0.16;',
+      'transformed.x += sway * 0.11 * position.y;',
+      'transformed.z += sway * 0.05 * position.y;'
+    ].join('\n')
+  );
+};
+var grass = new THREE.InstancedMesh(bladeGeo, grassMat, GRASS_COUNT);
+grass.receiveShadow = true;
+var gm = new THREE.Matrix4(), gq = new THREE.Quaternion(), gv = new THREE.Vector3(), gs = new THREE.Vector3();
+var ge = new THREE.Euler(), col = new THREE.Color();
+for (var i2 = 0; i2 < GRASS_COUNT; i2++){
+  var ang2 = Math.random()*Math.PI*2;
+  var rad2 = Math.pow(Math.random(), 0.5) * 16;
+  ge.set((Math.random()-0.5)*0.3, Math.random()*Math.PI, (Math.random()-0.5)*0.25);
+  gq.setFromEuler(ge);
+  gv.set(Math.cos(ang2)*rad2, 0, Math.sin(ang2)*rad2 - 2.2);
+  var sc2 = 0.5 + Math.random()*1.0;
+  gs.set(sc2, 0.5 + Math.random()*0.9, sc2);
+  gm.compose(gv, gq, gs);
+  grass.setMatrixAt(i2, gm);
+  col.setHSL(0.21 + Math.random()*0.08, 0.28 + Math.random()*0.22, 0.16 + Math.random()*0.15);
+  grass.setColorAt(i2, col);
+}
+grass.instanceMatrix.needsUpdate = true;
+if (grass.instanceColor) grass.instanceColor.needsUpdate = true;
+scene.add(grass);
+
+// ---------------------------------------------------------------- ferns
+var fernTex = (function(){
+  var s = 256, cv = document.createElement('canvas');
+  cv.width = cv.height = s;
+  var x = cv.getContext('2d');
+  x.clearRect(0,0,s,s);
+  x.translate(s/2, s-4);
+  for (var i = 0; i < 7; i++){
+    var ang = -0.95 + i*0.32 + (Math.random()-0.5)*0.1;
+    var len = 96 + Math.random()*66;
+    x.save();
+    x.rotate(ang);
+    x.strokeStyle = '#3d5726'; x.lineWidth = 2;
+    x.beginPath(); x.moveTo(0,0); x.lineTo(0,-len); x.stroke();
+    for (var t = 0.16; t < 1; t += 0.068){
+      var leafLen = (1-t) * 34;
+      x.fillStyle = 'hsl(' + (84 + Math.random()*18) + ',36%,' + (15 + Math.random()*13) + '%)';
+      for (var side = -1; side <= 1; side += 2){
+        x.save();
+        x.translate(0, -len*t);
+        x.rotate(side * (0.95 - t*0.3));
+        x.beginPath();
+        x.ellipse(0, -leafLen/2, Math.max(1.2, leafLen*0.17), leafLen/2, 0, 0, Math.PI*2);
+        x.fill();
+        x.restore();
+      }
+    }
+    x.restore();
+  }
+  var t2 = new THREE.CanvasTexture(cv);
+  t2.encoding = THREE.sRGBEncoding;
+  return t2;
+})();
+var fernMat = new THREE.MeshStandardMaterial({
+  map: fernTex, alphaTest: 0.4, side: THREE.DoubleSide,
+  roughness: 0.85, metalness: 0, color: 0x9db072
+});
+var fernGeo = new THREE.PlaneGeometry(1.4, 1.4);
+var ferns = new THREE.Group();
+for (var f = 0; f < 52; f++){
+  var fa = Math.random()*6.28, fr = 1.1 + Math.pow(Math.random(),0.65)*11;
+  var grp = new THREE.Group();
+  grp.position.set(Math.cos(fa)*fr, 0.68, Math.sin(fa)*fr - 2.4);
+  for (var cc = 0; cc < 3; cc++){
+    var card = new THREE.Mesh(fernGeo, fernMat);
+    card.rotation.y = (cc/3)*Math.PI + Math.random()*0.4;
+    grp.add(card);
+  }
+  var fs = 0.65 + Math.random()*0.9;
+  grp.scale.set(fs, fs, fs);
+  ferns.add(grp);
+}
+scene.add(ferns);
+
+// ---------------------------------------------------------------- dust
+var dustGeo = new THREE.BufferGeometry();
+var dustN = 150, dustPos = new Float32Array(dustN*3);
+for (var d = 0; d < dustN; d++){
+  dustPos[d*3]   = (Math.random()-0.5)*22;
+  dustPos[d*3+1] = Math.random()*4.5;
+  dustPos[d*3+2] = (Math.random()-0.5)*22 - 2;
+}
+dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos,3));
+var dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({
+  color: 0xffeacc, size: 0.022, transparent: true, opacity: 0.35,
+  sizeAttenuation: true, depthWrite: false, blending: THREE.AdditiveBlending
+}));
+scene.add(dust);
+
+// ---------------------------------------------------------------- camera + interaction
+function frameShot(){
+  camera.position.set(0.9, 1.5, 2.2);
+  camera.lookAt(0, 2.35, -6.2);
+  camera.rotation.z = 0.01;
+}
+frameShot();
+
+var dragging = false, lastX = 0, lastY = 0;
+canvas.addEventListener('pointerdown', function(e){ dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('pointerup', function(){ dragging = false; });
+window.addEventListener('pointermove', function(e){
+  if (!dragging) return;
+  camera.rotateOnWorldAxis(new THREE.Vector3(0,1,0), -(e.clientX - lastX) * 0.004);
+  camera.rotation.x = Math.max(-0.6, Math.min(0.6, camera.rotation.x - (e.clientY - lastY) * 0.003));
+  lastX = e.clientX; lastY = e.clientY;
+});
+window.addEventListener('resize', function(){
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+});
+
+var t0 = performance.now();
+var loading = document.getElementById('load');
+var started = false;
+manager.onLoad = function(){
+  loading.style.opacity = '0';
+  setTimeout(function(){ loading.style.display = 'none'; }, 700);
+  started = true;
+};
+
+function loop(now){
+  var t = (now - t0) / 1000;
+  windUniform.value = t;
+  var p = dustGeo.attributes.position;
+  for (var i = 0; i < dustN; i++){
+    p.array[i*3+1] += Math.sin(t*0.5 + i) * 0.0005;
+    p.array[i*3]   += Math.cos(t*0.33 + i*0.7) * 0.0008;
+  }
+  p.needsUpdate = true;
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+window.LOOK = { scene: scene, camera: camera, renderer: renderer, frame: frameShot,
+                ready: function(){ return started; }, cards: cards.length };
+})();
+</script>
+</body>
+</html>

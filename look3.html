@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>DEADLIGHT filmic test</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0d0a;overflow:hidden;
+    font-family:"Cascadia Mono",Consolas,monospace;color:#d8d5c8;}
+  #v{position:fixed;top:0;left:0;width:100%;height:100%;display:block;}
+  #cap{position:fixed;left:24px;bottom:22px;font-size:10px;letter-spacing:2px;
+    color:rgba(216,213,200,.45);text-transform:uppercase;line-height:2;pointer-events:none;}
+  #hint{position:fixed;right:24px;bottom:22px;font-size:10px;letter-spacing:2px;
+    color:rgba(216,213,200,.3);text-transform:uppercase;pointer-events:none;}
+  #load{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:#0b0d0a;font-size:11px;letter-spacing:4px;color:#6b7164;transition:opacity .6s;}
+</style>
+</head>
+<body>
+<canvas id="v"></canvas>
+<div id="cap">DEADLIGHT / FILMIC PASS<br>DEPTH OF FIELD · VOLUMETRIC SHAFTS · FILM GRADE</div>
+<div id="hint">DRAG TO LOOK</div>
+<div id="load">BUILDING WORLD</div>
+<script src="three.min.js"></script>
+<script src="RGBELoader.js"></script>
+<script src="GLTFLoader.js"></script>
+<script>
+(function(){
+'use strict';
+if (typeof THREE === 'undefined') { document.getElementById('load').textContent = 'three.js missing'; return; }
+
+var Q = new URLSearchParams(location.search);
+if (Q.get('clean')) {
+  var _c = document.getElementById('cap'), _h = document.getElementById('hint');
+  if (_c) _c.style.display = 'none';
+  if (_h) _h.style.display = 'none';
+}
+var CFG = {
+  exposure: parseFloat(Q.get('exp') || '1.05'),
+  bloom: parseFloat(Q.get('bloom') || '0.42'),
+  fog: parseFloat(Q.get('fog') || '0.030'),
+  grain: parseFloat(Q.get('grain') || '0.013'),
+  focus: parseFloat(Q.get('focus') || '11.4'),
+  coc: parseFloat(Q.get('coc') || '0.55'),
+  rays: parseFloat(Q.get('rays') || '1.15')
+};
+
+var canvas = document.getElementById('v');
+var renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:false, powerPreference:'high-performance'});
+var DPR = Math.min(window.devicePixelRatio || 1, 2);
+renderer.setPixelRatio(DPR);
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+renderer.outputEncoding = THREE.LinearEncoding;   // we encode in the grade pass
+renderer.toneMapping = THREE.NoToneMapping;       // ACES happens in the composite
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+var scene = new THREE.Scene();
+var camera = new THREE.PerspectiveCamera(38, window.innerWidth/window.innerHeight, 0.05, 200);
+
+var FOGCOL = new THREE.Color(0x6c7462);
+scene.fog = new THREE.FogExp2(FOGCOL.getHex(), CFG.fog);
+
+// graded sky dome: dark overhead, warm band at the horizon
+var skyGeo = new THREE.SphereGeometry(120, 24, 14);
+var skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false,
+  uniforms: {
+    top:   { value: new THREE.Color(0x1d2620) },
+    mid:   { value: new THREE.Color(0x6f7a63) },
+    warm:  { value: new THREE.Color(0xc08a56) },
+    sunDir:{ value: new THREE.Vector3(-0.45, 0.16, -0.88).normalize() }
+  },
+  vertexShader: [
+    'varying vec3 vDir;',
+    'void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }'
+  ].join('\n'),
+  fragmentShader: [
+    'uniform vec3 top, mid, warm; uniform vec3 sunDir; varying vec3 vDir;',
+    'void main(){',
+    '  float h = clamp(vDir.y * 1.15 + 0.06, 0.0, 1.0);',
+    '  vec3 c = mix(mid, top, pow(h, 0.62));',
+    '  float s = max(0.0, dot(normalize(vDir), sunDir));',
+    '  c += warm * pow(s, 5.0) * 0.55 + warm * pow(s, 40.0) * 0.9;',
+    '  gl_FragColor = vec4(c, 1.0);',
+    '}'
+  ].join('\n')
+});
+var skyDome = new THREE.Mesh(skyGeo, skyMat);
+scene.add(skyDome);
+
+// ---------------------------------------------------------------- loaders
+var manager = new THREE.LoadingManager();
+var texLoader = new THREE.TextureLoader(manager);
+var rgbe = new THREE.RGBELoader(manager);
+var gltfLoader = new THREE.GLTFLoader(manager);
+
+function loadTex(url, srgb, rep){
+  var t = texLoader.load(url);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  if (srgb) t.encoding = THREE.sRGBEncoding;
+  if (rep) t.repeat.set(rep[0], rep[1]);
+  return t;
+}
+
+var T = {
+  groundD: loadTex('looktex/forest_ground_04_diff_2k.jpg', true, [6,6]),
+  groundN: loadTex('looktex/forest_ground_04_nor_gl_2k.jpg', false, [6,6]),
+  stoneD:  loadTex('looktex/mossy_stone_wall_diff_2k.jpg', true, [1.1,1.1]),
+  stoneN:  loadTex('looktex/mossy_stone_wall_nor_gl_2k.jpg', false, [1.1,1.1])
+};
+
+rgbe.load('looktex/env.hdr', function(hdr){
+  hdr.mapping = THREE.EquirectangularReflectionMapping;
+  var pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  scene.environment = pmrem.fromEquirectangular(hdr).texture;
+  hdr.dispose();
+  pmrem.dispose();
+});
+
+// ---------------------------------------------------------------- lights
+var sun = new THREE.DirectionalLight(0xffb478, 4.4);
+sun.position.set(-14, 6, -34);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -20; sun.shadow.camera.right = 20;
+sun.shadow.camera.top = 20; sun.shadow.camera.bottom = -20;
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 90;
+sun.shadow.bias = -0.0007;
+sun.shadow.normalBias = 0.035;
+scene.add(sun); scene.add(sun.target);
+
+scene.add(new THREE.HemisphereLight(0x8fa4b8, 0x1a1c12, 0.26));
+var fill = new THREE.PointLight(0x9fbb78, 0.16, 10, 2);
+fill.position.set(2.2, 0.6, 3.4);
+scene.add(fill);
+
+// ---------------------------------------------------------------- ground + ruin
+var ground = new THREE.Mesh(
+  new THREE.CircleGeometry(44, 64),
+  new THREE.MeshStandardMaterial({
+    map: T.groundD, normalMap: T.groundN, normalScale: new THREE.Vector2(1.5,1.5),
+    roughness: 1, metalness: 0, color: 0x9aa08d
+  })
+);
+ground.rotation.x = -Math.PI/2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+var stoneMat = new THREE.MeshStandardMaterial({
+  map: T.stoneD, normalMap: T.stoneN, normalScale: new THREE.Vector2(1.25,1.25),
+  roughness: 0.92, metalness: 0, color: 0x9a9f90
+});
+function block(x,y,z,w,h,d,rx,ry,rz){
+  var m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), stoneMat);
+  m.position.set(x,y,z);
+  m.rotation.set(rx||0, ry||0, rz||0);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m); return m;
+}
+block(-2.2, 2.15, -6.2, 1.15, 4.3, 1.15, 0, 0.05, 0.015);
+block( 2.2, 2.15, -6.2, 1.15, 4.3, 1.15, 0, -0.04, -0.02);
+block( 0, 4.55, -6.2, 5.7, 0.9, 1.25, 0, 0, 0.01);
+block( 0, 5.32, -6.25, 1.35, 0.55, 1.0, 0.03, 0.22, 0);
+block(-4.8, 1.0, -4.5, 0.95, 2.0, 4.6, 0, 0.24, 0.03);
+block(-6.6, 0.6, -1.2, 0.9, 1.2, 3.4, 0, 0.52, 0.05);
+block( 4.7, 1.35, -3.8, 1.0, 2.7, 3.8, 0, -0.2, 0);
+block( 6.6, 0.8, 0.4, 0.95, 1.6, 2.7, 0.03, -0.44, 0);
+block(-3.3, 0.3, 1.4, 1.8, 0.6, 1.3, 0.09, 0.5, 0.05);
+block( 3.1, 0.26, 2.6, 1.5, 0.52, 1.15, -0.05, -0.72, 0.02);
+
+var puddleMat = new THREE.MeshStandardMaterial({
+  color: 0x1b2017, roughness: 0.3, metalness: 0, envMapIntensity: 1.1,
+  transparent: true, opacity: 0.85
+});
+[[-2.4,2.2,1.6],[1.8,3.2,1.0],[-4.2,-2.9,0.9],[0.2,-1.2,1.9]].forEach(function(p){
+  var m = new THREE.Mesh(new THREE.CircleGeometry(p[2], 28), puddleMat);
+  m.rotation.x = -Math.PI/2;
+  m.position.set(p[0], 0.012, p[1]);
+  scene.add(m);
+});
+
+
+// ---------------------------------------------------------------- the thing in the arch
+(function(){
+  var g = new THREE.Group();
+  var dark = new THREE.MeshStandardMaterial({ color: 0x05060a, roughness: 0.92, metalness: 0 });
+  var dark2 = new THREE.MeshStandardMaterial({ color: 0x0a0c12, roughness: 1 });
+  var torso = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.14, 1.0, 8), dark);
+  torso.position.y = 1.3; g.add(torso);
+  var hips = new THREE.Mesh(new THREE.SphereGeometry(0.17, 8, 6), dark);
+  hips.position.y = 0.82; hips.scale.set(1, 0.9, 0.9); g.add(hips);
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.145, 12, 10), dark2);
+  head.position.y = 1.95; head.scale.set(0.92, 1.18, 0.95); g.add(head);
+  var neck = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.16, 6), dark2);
+  neck.position.y = 1.83; g.add(neck);
+  for (var s = -1; s <= 1; s += 2){
+    var arm = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.03, 1.1, 6), dark);
+    arm.position.set(0.26*s, 1.28, 0.02); arm.rotation.z = -0.1*s; g.add(arm);
+    var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.045, 0.95, 6), dark);
+    leg.position.set(0.1*s, 0.4, 0); g.add(leg);
+    var eye = new THREE.Mesh(new THREE.SphereGeometry(0.02, 6, 5),
+      new THREE.MeshBasicMaterial({ color: 0xffe6bd }));
+    eye.position.set(0.05*s, 1.97, 0.12); g.add(eye);
+  }
+  g.traverse(function(o){ if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  g.position.set(0.15, 0, -8.1);
+  g.rotation.y = 0.06;
+  scene.add(g);
+  window.__thing = g;
+})();
+
+// ---------------------------------------------------------------- scanned models
+var MODELS = {
+  fern:    'lookmodels/fern_02/fern_02_1k.gltf',
+  grassA:  'lookmodels/grass_bermuda_01/grass_bermuda_01_1k.gltf',
+  grassB:  'lookmodels/grass_medium_01/grass_medium_01_1k.gltf',
+  shrub1:  'lookmodels/shrub_01/shrub_01_1k.gltf',
+  shrub2:  'lookmodels/shrub_02/shrub_02_1k.gltf',
+  shrub3:  'lookmodels/shrub_03/shrub_03_1k.gltf',
+  trunk:   'lookmodels/dead_tree_trunk_02/dead_tree_trunk_02_1k.gltf',
+  rocks:   'lookmodels/rock_moss_set_01/rock_moss_set_01_1k.gltf'
+};
+var loaded = {};
+
+function loadModel(key, url){
+  return new Promise(function(res){
+    gltfLoader.load(url, function(gltf){
+      gltf.scene.traverse(function(o){
+        if (o.isMesh){
+          o.castShadow = true;
+          o.receiveShadow = true;
+          if (o.material){
+            o.material.envMapIntensity = 0.55;
+            if (o.material.map) o.material.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+          }
+        }
+      });
+      loaded[key] = gltf.scene;
+      res();
+    }, undefined, function(err){ console.error('model fail', key, err); res(); });
+  });
+}
+
+var contactTex = (function(){
+  var s = 128, cv = document.createElement('canvas');
+  cv.width = cv.height = s;
+  var c = cv.getContext('2d');
+  var g = c.createRadialGradient(s/2, s/2, 0, s/2, s/2, s/2);
+  g.addColorStop(0, 'rgba(0,0,0,0.85)');
+  g.addColorStop(0.45, 'rgba(0,0,0,0.42)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  c.fillStyle = g; c.fillRect(0,0,s,s);
+  return new THREE.CanvasTexture(cv);
+})();
+var contactMat = new THREE.MeshBasicMaterial({
+  map: contactTex, transparent: true, depthWrite: false, opacity: 0.55,
+  blending: THREE.NormalBlending, color: 0x000000
+});
+function contact(x, z, r){
+  var m = new THREE.Mesh(new THREE.PlaneGeometry(r*2, r*2), contactMat);
+  m.rotation.x = -Math.PI/2;
+  m.position.set(x, 0.014, z);
+  m.renderOrder = -1;
+  scene.add(m);
+}
+
+function place(key, x, z, height, rotY, extra){
+  var src = loaded[key];
+  if (!src) return null;
+  var obj = src.clone(true);
+  scene.add(obj);
+  obj.rotation.y = rotY || 0;
+  obj.updateMatrixWorld(true);
+  var box = new THREE.Box3().setFromObject(obj);
+  var size = box.getSize(new THREE.Vector3());
+  var s = height / Math.max(0.001, size.y);
+  obj.scale.multiplyScalar(s);
+  obj.updateMatrixWorld(true);
+  box.setFromObject(obj);
+  obj.position.x += x - (box.min.x + box.max.x)/2;
+  obj.position.z += z - (box.min.z + box.max.z)/2;
+  obj.position.y += -box.min.y + (extra && extra.y || 0);
+  var spread = Math.max(box.max.x - box.min.x, box.max.z - box.min.z);
+  contact(x, z, Math.max(0.45, spread * 0.52));
+  return obj;
+}
+
+// ---------------------------------------------------------------- post chain
+var rtOpts = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, type: THREE.HalfFloatType, stencilBuffer: false };
+var rtScene = new THREE.WebGLRenderTarget(1, 1, rtOpts);
+rtScene.depthTexture = new THREE.DepthTexture(1, 1);
+rtScene.depthTexture.type = THREE.UnsignedShortType;
+var rtBright = new THREE.WebGLRenderTarget(1, 1, rtOpts);
+var rtBlurA = new THREE.WebGLRenderTarget(1, 1, rtOpts);
+var rtBlurB = new THREE.WebGLRenderTarget(1, 1, rtOpts);
+var rtDof = new THREE.WebGLRenderTarget(1, 1, rtOpts);
+var rtRays = new THREE.WebGLRenderTarget(1, 1, rtOpts);
+
+var fsScene = new THREE.Scene();
+var fsCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+var fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2,2), null);
+fsScene.add(fsQuad);
+
+var brightMat = new THREE.ShaderMaterial({
+  uniforms: { tDiffuse:{value:null}, threshold:{value:1.35} },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: [
+    'uniform sampler2D tDiffuse; uniform float threshold; varying vec2 vUv;',
+    'void main(){',
+    '  vec3 c = texture2D(tDiffuse, vUv).rgb;',
+    '  float l = dot(c, vec3(0.2126,0.7152,0.0722));',
+    '  float k = smoothstep(threshold, threshold + 0.85, l);',
+    '  gl_FragColor = vec4(c * k, 1.0);',
+    '}'
+  ].join('\n')
+});
+
+var blurMat = new THREE.ShaderMaterial({
+  uniforms: { tDiffuse:{value:null}, dir:{value:new THREE.Vector2(1,0)}, res:{value:new THREE.Vector2(1,1)} },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: [
+    'uniform sampler2D tDiffuse; uniform vec2 dir; uniform vec2 res; varying vec2 vUv;',
+    'void main(){',
+    '  vec2 px = dir / res;',
+    '  vec3 sum = vec3(0.0);',
+    '  sum += texture2D(tDiffuse, vUv - 4.0*px).rgb * 0.0162;',
+    '  sum += texture2D(tDiffuse, vUv - 3.0*px).rgb * 0.0540;',
+    '  sum += texture2D(tDiffuse, vUv - 2.0*px).rgb * 0.1216;',
+    '  sum += texture2D(tDiffuse, vUv - 1.0*px).rgb * 0.1946;',
+    '  sum += texture2D(tDiffuse, vUv           ).rgb * 0.2270;',
+    '  sum += texture2D(tDiffuse, vUv + 1.0*px).rgb * 0.1946;',
+    '  sum += texture2D(tDiffuse, vUv + 2.0*px).rgb * 0.1216;',
+    '  sum += texture2D(tDiffuse, vUv + 3.0*px).rgb * 0.0540;',
+    '  sum += texture2D(tDiffuse, vUv + 4.0*px).rgb * 0.0162;',
+    '  gl_FragColor = vec4(sum, 1.0);',
+    '}'
+  ].join('\n')
+});
+
+
+// ------------------------------------------------------------ depth of field
+var dofMat = new THREE.ShaderMaterial({
+  uniforms: {
+    tDiffuse:{value:null}, tDepth:{value:null},
+    near:{value:0.05}, far:{value:200.0},
+    focus:{value:CFG.focus}, cocScale:{value:CFG.coc}, res:{value:new THREE.Vector2(1,1)}
+  },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: [
+    'uniform sampler2D tDiffuse; uniform sampler2D tDepth;',
+    'uniform float near, far, focus, cocScale; uniform vec2 res;',
+    'varying vec2 vUv;',
+    'float lin(float d){ float z = d*2.0-1.0; return (2.0*near*far)/(far+near-z*(far-near)); }',
+    'void main(){',
+    '  float z = lin(texture2D(tDepth, vUv).x);',
+    '  float c = clamp(abs(z - focus) / focus, 0.0, 1.0);',
+    '  c = pow(c, 1.45) * cocScale;',
+    '  vec2 px = (c * 11.0) / res;',
+    '  vec3 col = texture2D(tDiffuse, vUv).rgb;',
+    '  float n = 1.0;',
+    '  for (int i = 0; i < 12; i++){',
+    '    float a = float(i) * 0.5236;',
+    '    float rr = 0.35 + 0.65 * (float(i - (i/4)*4) / 3.0);',
+    '    vec2 off = vec2(cos(a), sin(a)) * px * rr;',
+    '    col += texture2D(tDiffuse, vUv + off).rgb;',
+    '    n += 1.0;',
+    '  }',
+    '  gl_FragColor = vec4(col / n, 1.0);',
+    '}'
+  ].join('\n')
+});
+
+// ------------------------------------------------------------ volumetric shafts
+var raysMat = new THREE.ShaderMaterial({
+  uniforms: { tBright:{value:null}, sunUV:{value:new THREE.Vector2(0.5,0.5)}, density:{value:1.0} },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: [
+    'uniform sampler2D tBright; uniform vec2 sunUV; uniform float density; varying vec2 vUv;',
+    'void main(){',
+    '  vec2 delta = (vUv - sunUV) * density / 28.0;',
+    '  vec2 p = vUv;',
+    '  vec3 acc = vec3(0.0);',
+    '  float w = 1.0; float tot = 0.0;',
+    '  for (int i = 0; i < 28; i++){',
+    '    p -= delta;',
+    '    vec3 s = texture2D(tBright, clamp(p, 0.001, 0.999)).rgb;',
+    '    acc += s * w;',
+    '    tot += w;',
+    '    w *= 0.962;',
+    '  }',
+    '  gl_FragColor = vec4(acc / max(tot, 0.0001), 1.0);',
+    '}'
+  ].join('\n')
+});
+
+var gradeMat = new THREE.ShaderMaterial({
+  uniforms: {
+    tDiffuse:{value:null}, tBloom:{value:null}, tRays:{value:null},
+    exposure:{value:CFG.exposure}, bloom:{value:CFG.bloom}, rays:{value:CFG.rays},
+    time:{value:0}, res:{value:new THREE.Vector2(1,1)}, grain:{value:CFG.grain}
+  },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: [
+    'uniform sampler2D tDiffuse; uniform sampler2D tBloom; uniform sampler2D tRays;',
+    'uniform float exposure, bloom, rays, time, grain; uniform vec2 res;',
+    'varying vec2 vUv;',
+    'vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }',
+    'float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898,78.233))) * 43758.5453); }',
+    'void main(){',
+    '  vec2 d = vUv - 0.5;',
+    '  float r2 = dot(d,d);',
+    '  vec2 ca = d * r2 * 0.010;',
+    '  vec3 c;',
+    '  c.r = texture2D(tDiffuse, vUv + ca).r;',
+    '  c.g = texture2D(tDiffuse, vUv).g;',
+    '  c.b = texture2D(tDiffuse, vUv - ca).b;',
+    '  c += texture2D(tBloom, vUv).rgb * bloom;',
+    '  c += texture2D(tRays, vUv).rgb * rays * vec3(1.0, 0.80, 0.58);',
+    '  c *= exposure;',
+    '  c = aces(c);',
+    '  float l = dot(c, vec3(0.2126,0.7152,0.0722));',
+    '  c = mix(vec3(l), c, 1.08);',
+    '  c *= mix(vec3(0.94,0.98,1.05), vec3(1.06,1.0,0.92), smoothstep(0.15,0.85,l));',
+    '  float vig = smoothstep(1.08, 0.30, length(d)*1.18);',
+    '  c *= mix(1.0, vig, 0.9);',
+    '  c += (hash(vUv*res + fract(time)*97.0) - 0.5) * grain;',
+    '  c = max(c, vec3(0.0));',
+    '  gl_FragColor = vec4(pow(c, vec3(1.0/2.2)), 1.0);',
+    '}'
+  ].join('\n')
+});
+
+function setSize(){
+  var w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w/h;
+  camera.updateProjectionMatrix();
+  var dw = Math.floor(w * DPR), dh = Math.floor(h * DPR);
+  rtScene.setSize(dw, dh);
+  rtBright.setSize(Math.max(1, dw>>1), Math.max(1, dh>>1));
+  rtBlurA.setSize(Math.max(1, dw>>1), Math.max(1, dh>>1));
+  rtBlurB.setSize(Math.max(1, dw>>1), Math.max(1, dh>>1));
+  rtRays.setSize(Math.max(1, dw>>1), Math.max(1, dh>>1));
+  rtDof.setSize(dw, dh);
+  dofMat.uniforms.res.value.set(dw, dh);
+  dofMat.uniforms.near.value = camera.near;
+  dofMat.uniforms.far.value = camera.far;
+  blurMat.uniforms.res.value.set(Math.max(1, dw>>1), Math.max(1, dh>>1));
+  gradeMat.uniforms.res.value.set(dw, dh);
+}
+setSize();
+window.addEventListener('resize', setSize);
+
+function pass(mat, target){
+  fsQuad.material = mat;
+  renderer.setRenderTarget(target);
+  renderer.clear();
+  renderer.render(fsScene, fsCam);
+}
+
+var SUNWORLD = new THREE.Vector3(0.0, 2.1, -13.0);
+var sunUvVec = new THREE.Vector3();
+
+function renderPost(t){
+  renderer.setRenderTarget(rtScene);
+  renderer.clear();
+  renderer.render(scene, camera);
+
+  // bright pass for bloom + shafts
+  brightMat.uniforms.tDiffuse.value = rtScene.texture;
+  pass(brightMat, rtBright);
+
+  // volumetric shafts: radial blur of the bright buffer from the archway
+  sunUvVec.copy(SUNWORLD).project(camera);
+  raysMat.uniforms.sunUV.value.set(sunUvVec.x * 0.5 + 0.5, sunUvVec.y * 0.5 + 0.5);
+  raysMat.uniforms.tBright.value = rtBright.texture;
+  pass(raysMat, rtRays);
+
+  // bloom blur
+  blurMat.uniforms.tDiffuse.value = rtBright.texture;
+  blurMat.uniforms.dir.value.set(1, 0);
+  pass(blurMat, rtBlurA);
+
+  blurMat.uniforms.tDiffuse.value = rtBlurA.texture;
+  blurMat.uniforms.dir.value.set(0, 1);
+  pass(blurMat, rtBlurB);
+
+  // depth of field on the full-res frame
+  dofMat.uniforms.tDiffuse.value = rtScene.texture;
+  dofMat.uniforms.tDepth.value = rtScene.depthTexture;
+  pass(dofMat, rtDof);
+
+  gradeMat.uniforms.tDiffuse.value = rtDof.texture;
+  gradeMat.uniforms.tBloom.value = rtBlurB.texture;
+  gradeMat.uniforms.tRays.value = rtRays.texture;
+  gradeMat.uniforms.time.value = t;
+  pass(gradeMat, null);
+}
+
+// ---------------------------------------------------------------- camera
+function frameShot(){
+  camera.position.set(1.15, 1.52, 3.6);
+  camera.lookAt(0.05, 2.05, -8.1);
+  camera.rotation.z = 0.006;
+}
+
+var dragging = false, lastX = 0, lastY = 0;
+canvas.addEventListener('pointerdown', function(e){ dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('pointerup', function(){ dragging = false; });
+window.addEventListener('pointermove', function(e){
+  if (!dragging) return;
+  camera.rotateOnWorldAxis(new THREE.Vector3(0,1,0), -(e.clientX - lastX) * 0.004);
+  camera.rotation.x = Math.max(-0.6, Math.min(0.6, camera.rotation.x - (e.clientY - lastY) * 0.003));
+  lastX = e.clientX; lastY = e.clientY;
+});
+
+// ---------------------------------------------------------------- build + go
+var loading = document.getElementById('load');
+var started = false;
+var t0 = performance.now();
+
+Promise.all(Object.keys(MODELS).map(function(k){ return loadModel(k, MODELS[k]); })).then(function(){
+
+  // foreground ferns framing the shot
+  place('fern', -3.1, 2.6, 1.2, 0.4);
+  place('fern', -4.0, 1.6, 0.95, 1.9);
+  place('fern', 3.2, 2.4, 1.15, 2.6);
+  place('fern', 4.1, 1.3, 0.9, 0.8);
+  place('fern', -3.6, 0.4, 1.15, 1.2);
+  place('fern', 4.2, -0.6, 1.0, 2.1);
+
+  // ferns along the walls
+  var fernSpots = [[-4.9,-3.0],[-5.6,-5.2],[5.3,-2.6],[6.0,-5.4],[-3.4,-7.6],[3.6,-7.4],[-7.2,1.6],[7.4,2.2],[-0.6,-8.6],[1.4,-8.9]];
+  fernSpots.forEach(function(p, i){ place('fern', p[0], p[1], 0.85 + (i%3)*0.18, i*1.3); });
+
+  // ground grass clumps
+  for (var i = 0; i < 30; i++){
+    var a = Math.random()*Math.PI*2, r = 1.0 + Math.pow(Math.random(),0.6)*11;
+    place(i % 3 === 0 ? 'grassB' : 'grassA', Math.cos(a)*r, Math.sin(a)*r - 2.0, 0.28 + Math.random()*0.3, Math.random()*6.28);
+  }
+
+  // shrubs and small trees on the flanks
+  place('shrub1', -5.4, -8.2, 2.6, 0.6);
+  place('shrub1',  6.2, -8.6, 2.4, 2.1);
+  place('shrub2', -7.0, -3.4, 1.6, 1.4);
+  place('shrub2',  7.8, -2.2, 1.5, 0.3);
+  place('shrub3', -4.2, -9.6, 1.3, 2.7);
+  place('shrub3',  4.6, -9.2, 1.2, 1.1);
+  place('shrub2', -8.4,  3.2, 1.8, 2.9);
+  place('shrub1',  8.6,  3.8, 2.0, 1.7);
+
+  // dead trunks
+  place('trunk', -3.9, -1.0, 1.35, 1.35);
+  place('trunk',  5.0, -6.6, 1.15, 0.4);
+  contact(0.15, -8.1, 0.5);
+
+  // mossy rocks at the arch base
+  place('rocks', -2.0, -5.0, 0.9, 0.7);
+  place('rocks',  2.4, -5.2, 0.75, 2.2);
+  place('rocks', -5.9, 1.0, 0.7, 1.1);
+
+  frameShot();
+  renderPost(0);
+  loading.style.opacity = '0';
+  setTimeout(function(){ loading.style.display = 'none'; }, 700);
+  started = true;
+});
+
+function loop(now){
+  var t = (now - t0) / 1000;
+  if (started) renderPost(t);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+window.LOOK2 = {
+  scene: scene, camera: camera, renderer: renderer,
+  frame: frameShot,
+  setExposure: function(v){ gradeMat.uniforms.exposure.value = v; },
+  setBloom: function(v){ gradeMat.uniforms.bloom.value = v; },
+  ready: function(){ return started; }
+};
+})();
+</script>
+</body>
+</html>
