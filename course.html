@@ -98,10 +98,14 @@ torch.shadow.bias = -0.0015;
 torch.shadow.normalBias = 0.04;
 camera.add(torch); camera.add(torch.target); scene.add(camera);
 scene.add(new THREE.HemisphereLight(0x2a3d5c, 0x0a0c10, 0.34));
+var camFill = new THREE.PointLight(0x9fb6d8, 0.45, 9, 2);
+camFill.position.set(0, 0.2, 0.6);
+camera.add(camFill);
 
 // ---------------------------------------------------------------- course geometry
 // a box is a solid you can stand on: x/z centre, half extents, top height, depth
 var boxes = [];
+var padSolids = [];
 var STEP_MAT  = new THREE.MeshStandardMaterial({color:0x1a1d21, roughness:0.62, metalness:0.55});
 var EDGE_MAT  = new THREE.MeshStandardMaterial({color:0x8a6a1e, roughness:0.5, metalness:0.2,
                                                 emissive:0x120a00, emissiveIntensity:1});
@@ -123,6 +127,7 @@ function pad(name, x, z, hw, hd, top, thick){
   g.add(glow);
   g.position.set(x, 0, z);
   scene.add(g);
+  padSolids.push(body, edge);
   boxes.push({x0:x-hw, x1:x+hw, z0:z-hd, z1:z+hd, y0:top-thick, y1:top});
   return g;
 }
@@ -203,6 +208,107 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
   });
 }, undefined, function(e){ console.error('glb', e); });
 
+
+// ---------------------------------------------------------------- the character
+var AV = { phase: 0, yaw: 0, legL:null, legR:null, armL:null, armR:null, torso:null, hips:null, root:null };
+(function(){
+  var suit = new THREE.MeshStandardMaterial({color:0x232a30, roughness:0.72, metalness:0.22});
+  var trim = new THREE.MeshStandardMaterial({color:0x2c3126, roughness:0.52, metalness:0.45,
+                                             emissive:0x2a3a08, emissiveIntensity:0.55});
+  var visor = new THREE.MeshBasicMaterial({color:0x9dffbe});
+
+  var g = new THREE.Group();
+  g.rotation.order = 'YXZ';
+
+  var hips = new THREE.Group(); hips.position.y = 0.92; g.add(hips);
+
+  var torso = new THREE.Mesh(new THREE.BoxGeometry(0.40, 0.52, 0.24), suit);
+  torso.position.y = 0.26; hips.add(torso);
+  var chest = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.10, 0.26), trim);
+  chest.position.y = 0.14; hips.add(chest);
+
+  var neck = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.10, 8), suit);
+  neck.position.y = 0.56; hips.add(neck);
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.135, 14, 12), suit);
+  head.position.y = 0.70; head.scale.set(0.94, 1.1, 0.96); hips.add(head);
+  var vis = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.045, 0.02), visor);
+  vis.position.set(0, 0.71, -0.125); hips.add(vis);
+
+  function limb(w, len, mat, px, py, dz){
+    var pivot = new THREE.Group();
+    pivot.position.set(px, py, 0);
+    var m = new THREE.Mesh(new THREE.BoxGeometry(w, len, w*0.92), mat);
+    m.position.y = -len/2;
+    pivot.add(m);
+    hips.add(pivot);
+    return pivot;
+  }
+  AV.armL = limb(0.10, 0.52, suit, -0.285, 0.47);
+  AV.armR = limb(0.10, 0.52, suit,  0.285, 0.47);
+  // shoulder caps so the silhouette reads from behind
+  for (var sgn=-1; sgn<=1; sgn+=2){
+    var cap = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), trim);
+    cap.position.set(0.245*sgn, 0.47, 0); hips.add(cap);
+  }
+  AV.legL = limb(0.135, 0.86, suit, -0.105, 0.02);
+  AV.legR = limb(0.135, 0.86, suit,  0.105, 0.02);
+
+  g.traverse(function(o){ if (o.isMesh){ o.castShadow = true; o.receiveShadow = false; } });
+  AV.root = g; AV.hips = hips; AV.torso = torso;
+  scene.add(g);
+})();
+
+// ---------------------------------------------------------------- third person camera
+var CAM = { mode:'third', yaw:0, pitch:0.17, dist:3.6, cur:3.6, target:new THREE.Vector3() };
+var camRay = new THREE.Raycaster();
+var camSolids = padSolids;
+
+function placeCamera(dt){
+  var eyeY = 1.42;
+  CAM.target.set(P.pos.x, P.pos.y + eyeY, P.pos.z);
+
+  if (CAM.mode === 'first'){
+    camera.position.set(P.pos.x, P.pos.y + 1.55, P.pos.z);
+    camera.rotation.set(-CAM.pitch, CAM.yaw, 0);
+    return;
+  }
+
+  var cp = Math.cos(CAM.pitch), sp = Math.sin(CAM.pitch);
+  var dir = new THREE.Vector3(Math.sin(CAM.yaw) * cp, sp, Math.cos(CAM.yaw) * cp);
+  // pull in if a pad or the yard is between us and the character
+  var want = CAM.target.clone().addScaledVector(dir, CAM.dist);
+  var toCam = want.clone().sub(CAM.target);
+  var len = toCam.length();
+  camRay.set(CAM.target, toCam.normalize());
+  camRay.far = len;
+  var hits = camRay.intersectObjects(camSolids.concat(meshes), true);
+  if (hits.length && hits[0].distance < len){
+    len = Math.max(0.85, hits[0].distance - 0.22);
+  }
+  CAM.cur += (len - CAM.cur) * Math.min(1, dt * (len < CAM.cur ? 18 : 6));
+  camera.position.copy(CAM.target).addScaledVector(dir, CAM.cur);
+  camera.lookAt(CAM.target.x - Math.sin(CAM.yaw)*0.55, CAM.target.y + 0.12, CAM.target.z - Math.cos(CAM.yaw)*0.55);
+}
+
+function animateAvatar(dt, speed){
+  AV.phase += dt * speed * 2.9;
+  var s = Math.min(1, speed / 4.5);
+  var sw = Math.sin(AV.phase);
+  if (P.grounded){
+    AV.legL.rotation.x =  sw * 0.78 * s;
+    AV.legR.rotation.x = -sw * 0.78 * s;
+    AV.armL.rotation.x = -sw * 0.62 * s;
+    AV.armR.rotation.x =  sw * 0.62 * s;
+    AV.hips.position.y = 0.92 + Math.abs(Math.cos(AV.phase)) * 0.022 * s;
+  } else {
+    AV.legL.rotation.x = -0.55; AV.legR.rotation.x = 0.32;
+    AV.armL.rotation.x = -0.9;  AV.armR.rotation.x = 0.7;
+  }
+  AV.hips.rotation.x = -0.06 * s;
+  AV.root.position.set(P.pos.x, P.pos.y, P.pos.z);
+  AV.root.rotation.y = AV.yaw;
+}
+
 // ---------------------------------------------------------------- player
 var P = {
   pos: new THREE.Vector3(0, 0.55, 7.0),   // feet
@@ -234,9 +340,17 @@ canvas.addEventListener('click', function(){
 document.addEventListener('mousemove', function(e){
   if (G.mode === 'title' || LOOK.active) return;
   if (document.pointerLockElement !== canvas) return;
-  P.yaw   -= e.movementX * 0.0022;
-  P.pitch -= e.movementY * 0.0019;
-  P.pitch = Math.max(-1.2, Math.min(1.2, P.pitch));
+  CAM.yaw   -= e.movementX * 0.0024;
+  CAM.pitch += e.movementY * 0.0018;
+  CAM.pitch = Math.max(-0.55, Math.min(0.95, CAM.pitch));
+});
+
+document.addEventListener('keydown', function(e){
+  if (e.code === 'KeyV'){
+    CAM.mode = CAM.mode === 'third' ? 'first' : 'third';
+    if (CAM.mode === 'third'){ AV.root.add(torch); AV.root.add(torch.target); }
+    else { camera.add(torch); camera.add(torch.target); }
+  }
 });
 
 canvas.addEventListener('touchstart', function(e){
@@ -261,9 +375,9 @@ canvas.addEventListener('touchmove', function(e){
       STICK.x = dx; STICK.y = dy;
       document.getElementById('knob').style.transform = 'translate(' + (dx*30) + 'px,' + (dy*30) + 'px)';
     } else if (t.identifier === LOOK.id){
-      P.yaw   -= (t.clientX - LOOK.lx) * 0.005;
-      P.pitch -= (t.clientY - LOOK.ly) * 0.004;
-      P.pitch = Math.max(-1.2, Math.min(1.2, P.pitch));
+      CAM.yaw   -= (t.clientX - LOOK.lx) * 0.005;
+      CAM.pitch += (t.clientY - LOOK.ly) * 0.0038;
+      CAM.pitch = Math.max(-0.55, Math.min(0.95, CAM.pitch));
       LOOK.lx = t.clientX; LOOK.ly = t.clientY;
     }
   }
@@ -385,6 +499,9 @@ function start(){
   G.mode = 'play';
   G.running = false; G.time = 0; G.cp = 0;
   reset(true);
+  AV.yaw = CAM.yaw + Math.PI;
+  AV.root.position.set(P.pos.x, P.pos.y, P.pos.z);
+  if (CAM.mode === 'third'){ AV.root.add(torch); AV.root.add(torch.target); }
   if (!IS_TOUCH){ var p = canvas.requestPointerLock(); if (p && p.catch) p.catch(function(){}); }
 }
 
@@ -428,13 +545,18 @@ function update(dt){
   if (moving && !G.running){ G.running = true; }
   if (G.running) G.time += dt;
 
-  var speed = running ? 4.5 : 2.8;
+  var speed = running ? 4.0 : 2.6;
   var len = Math.hypot(fwd, side);
   if (len > 1){ fwd /= len; side /= len; len = 1; }
 
-  var sinY = Math.sin(P.yaw), cosY = Math.cos(P.yaw);
-  var wishX = (side*cosY - fwd*sinY);
-  var wishZ = (-side*sinY - fwd*cosY);
+  var sinY = Math.sin(CAM.yaw), cosY = Math.cos(CAM.yaw);
+  var wishX = (-fwd*sinY + side*cosY);
+  var wishZ = (-fwd*cosY - side*sinY);
+  if (len > 0.02){
+    var wantYaw = Math.atan2(-wishX, -wishZ);
+    var d = ((wantYaw - AV.yaw + Math.PI*3) % (Math.PI*2)) - Math.PI;
+    AV.yaw += d * Math.min(1, dt * 13);
+  }
 
   // snappier ground control, floatier in the air
   var accel = P.grounded ? 42 : 11;
@@ -445,7 +567,7 @@ function update(dt){
   P.coyote = P.grounded ? 0.10 : Math.max(0, P.coyote - dt);
   P.jumpBuffer = Math.max(0, P.jumpBuffer - dt);
   if (P.jumpBuffer > 0 && P.coyote > 0){
-    P.vel.y = 6.4;
+    P.vel.y = 6.2;
     P.grounded = false; P.coyote = 0; P.jumpBuffer = 0;
   }
 
@@ -467,9 +589,9 @@ function update(dt){
     finish(); return;
   }
 
-  // camera
-  camera.position.set(P.pos.x, P.pos.y + 1.55 + (moving && P.grounded ? Math.sin(G.time*11)*0.016 : 0), P.pos.z);
-  camera.rotation.set(P.pitch, P.yaw, 0);
+  // body and camera
+  animateAvatar(dt, Math.hypot(P.vel.x, P.vel.z));
+  placeCamera(dt);
 
   // hud
   document.querySelector('#clock').innerHTML = G.time.toFixed(2) + '<small>RUN</small>';
@@ -490,10 +612,11 @@ window.COURSE = {
     return { mode:G.mode, time:+G.time.toFixed(2), cp:G.cp, grounded:P.grounded,
              pos:[+P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2)],
              vel:[+P.vel.x.toFixed(2), +P.vel.y.toFixed(2), +P.vel.z.toFixed(2)],
-             pads: boxes.length, ready: window.YARD_READY === true };
+             pads: boxes.length, ready: window.YARD_READY === true, cam: CAM.mode, camDist: +CAM.cur.toFixed(2) };
   },
   place: function(x, y, z){ P.pos.set(x, y, z); P.vel.set(0,0,0); },
-  look: function(yaw, pitch){ P.yaw = yaw; P.pitch = pitch || -0.1; },
+  look: function(yaw, pitch){ CAM.yaw = yaw; if (pitch !== undefined) CAM.pitch = -pitch; },
+  cam: function(mode){ CAM.mode = mode; },
   jump: function(){ P.jumpBuffer = 0.16; },
   start: start
 };
