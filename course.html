@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>DEADLIGHT — night yard course</title>
+<style>
+  html,body{margin:0;height:100%;background:#04060a;overflow:hidden;touch-action:none;
+    font-family:"Cascadia Mono",Consolas,monospace;color:#d8d5c8;-webkit-user-select:none;user-select:none;}
+  #v{position:fixed;top:0;left:0;width:100%;height:100%;display:block;}
+  #vig{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at 50% 48%,rgba(0,0,0,0) 38%,rgba(0,0,0,.68) 100%);}
+  #hud{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .4s;}
+  #hud.on{opacity:1;}
+  #clock{position:absolute;left:50%;top:18px;transform:translateX(-50%);font-size:24px;letter-spacing:3px;
+    color:#e8e4d6;text-shadow:0 0 20px rgba(0,0,0,.9);}
+  #clock small{display:block;text-align:center;font-size:9px;letter-spacing:3px;color:#7d8478;margin-top:2px;}
+  #best{position:absolute;right:22px;top:20px;font-size:9px;letter-spacing:2px;color:#7d8478;text-align:right;line-height:1.9;}
+  #cp{position:absolute;left:22px;top:20px;font-size:9px;letter-spacing:2px;color:#7d8478;line-height:1.9;}
+  #cp b{color:#9dffbe;font-weight:normal;}
+  #msg{position:absolute;left:0;right:0;bottom:88px;text-align:center;font-size:12px;letter-spacing:4px;
+    color:rgba(255,179,71,.9);text-shadow:0 0 18px rgba(255,120,40,.45);}
+  #screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;background:rgba(4,6,10,.87);z-index:10;text-align:center;padding:20px;}
+  #screen h1{font-size:26px;letter-spacing:8px;font-weight:normal;margin:0 0 6px;}
+  #screen h2{font-size:10px;letter-spacing:4px;color:#7d8478;font-weight:normal;margin:0 0 24px;}
+  #screen p{font-size:11px;letter-spacing:1.5px;line-height:2.1;color:#9aa093;margin:0 0 22px;max-width:470px;}
+  #screen b{color:#ffb347;font-weight:normal;}
+  #go{border:1px solid rgba(255,179,71,.5);background:none;color:#ffb347;font:inherit;
+    font-size:11px;letter-spacing:4px;padding:14px 34px;cursor:pointer;}
+  #go:hover{background:rgba(255,179,71,.08);}
+  #stick{position:fixed;left:26px;bottom:34px;width:116px;height:116px;border-radius:50%;
+    border:1px solid rgba(255,255,255,.13);display:none;}
+  #stick.on{display:block;}
+  #knob{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
+    border-radius:50%;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);}
+  #jump{position:fixed;right:30px;bottom:44px;width:88px;height:88px;border-radius:50%;
+    border:1px solid rgba(255,179,71,.35);color:#ffb347;font:inherit;font-size:10px;letter-spacing:2px;
+    display:none;background:rgba(255,179,71,.06);}
+  #jump.on{display:block;}
+</style>
+</head>
+<body>
+<canvas id="v"></canvas>
+<div id="vig"></div>
+
+<div id="hud">
+  <div id="clock">0.00<small>RUN</small></div>
+  <div id="cp">CHECKPOINT <b>START</b></div>
+  <div id="best"></div>
+  <div id="msg"></div>
+</div>
+
+<div id="stick"><div id="knob"></div></div>
+<button id="jump">JUMP</button>
+
+<div id="screen">
+  <h1>DEADLIGHT</h1>
+  <h2>NIGHT YARD — THE RUN</h2>
+  <p>
+    Get from the platform to the green lamp at the tank.<br>
+    Do not touch the ground after the first jump.<br><br>
+    <b>WASD / arrows</b> move · <b>SPACE</b> jump · <b>SHIFT</b> run<br>
+    <span style="color:#6c7268">R restarts · falling drops you at the last checkpoint</span>
+  </p>
+  <button id="go">START RUN</button>
+</div>
+
+<script src="three.min.js"></script>
+<script src="GLTFLoader.js"></script>
+<script>
+(function(){
+'use strict';
+var canvas = document.getElementById('v');
+var renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true, powerPreference:'high-performance'});
+var IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, IS_TOUCH ? 1.5 : 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.18;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05080d);
+scene.fog = new THREE.FogExp2(0x0b1219, 0.014);
+
+var camera = new THREE.PerspectiveCamera(64, window.innerWidth/window.innerHeight, 0.05, 300);
+camera.rotation.order = 'YXZ';
+
+var torch = new THREE.SpotLight(0xffe2bc, 2.4, 30, 0.66, 0.85, 1.2);
+torch.position.set(0.1, -0.06, 0.1);
+torch.target.position.set(0, -0.22, -6);
+torch.castShadow = true;
+torch.shadow.mapSize.set(512, 512);
+torch.shadow.bias = -0.0015;
+torch.shadow.normalBias = 0.04;
+camera.add(torch); camera.add(torch.target); scene.add(camera);
+scene.add(new THREE.HemisphereLight(0x2a3d5c, 0x0a0c10, 0.34));
+
+// ---------------------------------------------------------------- course geometry
+// a box is a solid you can stand on: x/z centre, half extents, top height, depth
+var boxes = [];
+var STEP_MAT  = new THREE.MeshStandardMaterial({color:0x1a1d21, roughness:0.62, metalness:0.55});
+var EDGE_MAT  = new THREE.MeshStandardMaterial({color:0x8a6a1e, roughness:0.5, metalness:0.2,
+                                                emissive:0x120a00, emissiveIntensity:1});
+var PANEL_MAT = new THREE.MeshStandardMaterial({color:0x0f1215, roughness:0.85, metalness:0.2});
+
+function pad(name, x, z, hw, hd, top, thick){
+  thick = thick || 0.34;
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(new THREE.BoxGeometry(hw*2, thick, hd*2), STEP_MAT);
+  body.position.y = top - thick/2;
+  body.castShadow = true; body.receiveShadow = true;
+  g.add(body);
+  // lit edge strip so the landing reads in the dark
+  var edge = new THREE.Mesh(new THREE.BoxGeometry(hw*2 + 0.06, 0.045, hd*2 + 0.06), EDGE_MAT);
+  edge.position.y = top + 0.012;
+  g.add(edge);
+  var glow = new THREE.PointLight(0xffc070, 0.30, 4.0, 2);
+  glow.position.set(0, top + 0.35, 0);
+  g.add(glow);
+  g.position.set(x, 0, z);
+  scene.add(g);
+  boxes.push({x0:x-hw, x1:x+hw, z0:z-hd, z1:z+hd, y0:top-thick, y1:top});
+  return g;
+}
+
+// the run: eight hops down the yard, zig-zagging, rising all the way.
+// rythem is 3.2m of centre spacing with 0.9 half-depth, so every gap is 1.4m,
+// and every step up is 0.45m. Easy to read, unforgiving if you walk it.
+var LAYOUT = [
+  // x,    hw,   hd,   top
+  [ 0.0, 1.80, 1.00, 0.55],
+  [ 1.2, 1.20, 0.90, 1.00],
+  [ 0.4, 1.00, 0.90, 1.45],
+  [-0.8, 0.40, 1.00, 1.90],   // balance beam: 0.8m wide, 2m long
+  [ 0.0, 1.00, 0.90, 2.35],
+  [ 1.2, 0.40, 1.00, 2.80],   // balance beam
+  [ 0.6, 1.00, 0.90, 3.25],
+  [-0.6, 1.20, 1.00, 3.70]
+];
+var PAD_Z0 = 7.0, PAD_STEP = 3.2;
+LAYOUT.forEach(function(L, i){
+  pad('p' + i, L[0], PAD_Z0 - i*PAD_STEP, L[1], L[2], L[3]);
+});
+
+// finish gate over the last pad
+(function(){
+  var FX = -0.6, FZ = 7.0 - 7*3.2, FY = 3.7;
+  var post = new THREE.MeshStandardMaterial({color:0x14171a, roughness:0.6, metalness:0.6});
+  for (var s=-1; s<=1; s+=2){
+    var p = new THREE.Mesh(new THREE.BoxGeometry(0.09, 2.1, 0.09), post);
+    p.position.set(FX + s*1.35, FY + 1.05, FZ); p.castShadow = true; scene.add(p);
+  }
+  var bar = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.09, 0.09), post);
+  bar.position.set(FX, FY + 2.1, FZ); scene.add(bar);
+  var lamp = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), new THREE.MeshBasicMaterial({color:0x9dffbe}));
+  lamp.position.set(FX, FY + 2.1, FZ); scene.add(lamp);
+  var gl = new THREE.PointLight(0x86ffb0, 2.4, 11, 2);
+  gl.position.set(FX, FY + 1.9, FZ); scene.add(gl);
+})();
+
+// checkpoints: index into the pad list
+var CHECKPOINTS = [
+  {x: 0.0, z:7.0,     y:0.55, label:'START'},
+  {x:-0.8, z:7.0-3*3.2, y:1.90, label:'BEAM'},
+  {x: 1.2, z:7.0-5*3.2, y:2.80, label:'HIGH'},
+  {x:-0.6, z:7.0-7*3.2, y:3.70, label:'GATE'}
+];
+var FINISH = {x:-0.6, z:7.0-7*3.2, y:3.70};
+
+// yard obstacles that still block you
+var walls = [{x0:-8.6, x1:8.6, z0:-2.55, z1:-1.85, y0:0, y1:1.3}];
+var TANK = {x:-10.5, z:-12.0, r:3.2};
+
+// ---------------------------------------------------------------- baked yard
+var meshes = [];
+new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
+  scene.add(gltf.scene);
+  gltf.scene.traverse(function(o){
+    if (!o.isMesh) return;
+    meshes.push(o);
+    o.castShadow = false; o.receiveShadow = true;
+    if (o.geometry.attributes.uv && !o.geometry.attributes.uv2)
+      o.geometry.setAttribute('uv2', o.geometry.attributes.uv);
+    var m = o.material;
+    if (m && m.emissive && (m.emissiveMap || m.emissive.getHex() !== 0))
+      m.emissiveIntensity = m.emissiveMap ? 2.2 : 6.0;
+  });
+  var pending = meshes.length;
+  function done(){ if (--pending === 0) window.YARD_READY = true; }
+  meshes.forEach(function(m){
+    new THREE.TextureLoader().load('bakenight/' + m.name + '_lm.png', function(t){
+      t.encoding = THREE.sRGBEncoding;
+      t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      m.material.lightMap = t;
+      m.material.lightMapIntensity = 1.7;
+      m.material.needsUpdate = true;
+      done();
+    }, undefined, done);
+  });
+}, undefined, function(e){ console.error('glb', e); });
+
+// ---------------------------------------------------------------- player
+var P = {
+  pos: new THREE.Vector3(0, 0.55, 7.0),   // feet
+  vel: new THREE.Vector3(),
+  yaw: 0, pitch: -0.05,
+  radius: 0.32, height: 1.68,
+  grounded: true, coyote: 0, jumpBuffer: 0
+};
+var G = { mode:'title', time:0, running:false, cp:0, best:null, msg:'', msgT:0 };
+var keys = {};
+var STICK = {active:false, x:0, y:0, id:null};
+var LOOK = {active:false, id:null, lx:0, ly:0};
+
+try { G.best = parseFloat(localStorage.getItem('dl_course_best')) || null; } catch(e){}
+
+document.addEventListener('keydown', function(e){
+  if (e.code === 'Space'){ P.jumpBuffer = 0.14; e.preventDefault(); }
+  if (e.code === 'KeyR' && G.mode !== 'title') reset(true);
+  keys[e.code] = true;
+  if (G.mode === 'title' && (e.code === 'Enter' || e.code === 'Space')) start();
+});
+document.addEventListener('keyup', function(e){ keys[e.code] = false; });
+
+canvas.addEventListener('click', function(){
+  if (G.mode !== 'title' && !IS_TOUCH && document.pointerLockElement !== canvas){
+    var p = canvas.requestPointerLock(); if (p && p.catch) p.catch(function(){});
+  }
+});
+document.addEventListener('mousemove', function(e){
+  if (G.mode === 'title' || LOOK.active) return;
+  if (document.pointerLockElement !== canvas) return;
+  P.yaw   -= e.movementX * 0.0022;
+  P.pitch -= e.movementY * 0.0019;
+  P.pitch = Math.max(-1.2, Math.min(1.2, P.pitch));
+});
+
+canvas.addEventListener('touchstart', function(e){
+  for (var i=0;i<e.changedTouches.length;i++){
+    var t = e.changedTouches[i];
+    if (t.clientX < window.innerWidth*0.45 && !STICK.active){
+      STICK.active = true; STICK.id = t.identifier; STICK.cx = t.clientX; STICK.cy = t.clientY;
+      document.getElementById('stick').classList.add('on');
+    } else if (!LOOK.active){
+      LOOK.active = true; LOOK.id = t.identifier; LOOK.lx = t.clientX; LOOK.ly = t.clientY;
+    }
+  }
+  e.preventDefault();
+}, {passive:false});
+canvas.addEventListener('touchmove', function(e){
+  for (var i=0;i<e.changedTouches.length;i++){
+    var t = e.changedTouches[i];
+    if (t.identifier === STICK.id){
+      var dx = (t.clientX - STICK.cx)/34, dy = (t.clientY - STICK.cy)/34;
+      var len = Math.hypot(dx, dy) || 1;
+      if (len > 1){ dx/=len; dy/=len; }
+      STICK.x = dx; STICK.y = dy;
+      document.getElementById('knob').style.transform = 'translate(' + (dx*30) + 'px,' + (dy*30) + 'px)';
+    } else if (t.identifier === LOOK.id){
+      P.yaw   -= (t.clientX - LOOK.lx) * 0.005;
+      P.pitch -= (t.clientY - LOOK.ly) * 0.004;
+      P.pitch = Math.max(-1.2, Math.min(1.2, P.pitch));
+      LOOK.lx = t.clientX; LOOK.ly = t.clientY;
+    }
+  }
+  e.preventDefault();
+}, {passive:false});
+canvas.addEventListener('touchend', function(e){
+  for (var i=0;i<e.changedTouches.length;i++){
+    var t = e.changedTouches[i];
+    if (t.identifier === STICK.id){
+      STICK.active = false; STICK.id = null; STICK.x = STICK.y = 0;
+      document.getElementById('knob').style.transform = '';
+      document.getElementById('stick').classList.remove('on');
+    }
+    if (t.identifier === LOOK.id){ LOOK.active = false; LOOK.id = null; }
+  }
+}, {passive:false});
+document.getElementById('jump').addEventListener('touchstart', function(e){
+  P.jumpBuffer = 0.16; e.preventDefault(); e.stopPropagation();
+}, {passive:false});
+
+// ---------------------------------------------------------------- physics
+function overlapXZ(b, x, z, r){
+  return x + r > b.x0 && x - r < b.x1 && z + r > b.z0 && z - r < b.z1;
+}
+
+function moveAndCollide(dt){
+  var steps = 2, h = dt/steps;
+  for (var s=0; s<steps; s++){
+    // vertical
+    P.vel.y -= 19.5 * h;
+    var ny = P.pos.y + P.vel.y * h;
+    var wasGrounded = false;
+    for (var i=0;i<boxes.length;i++){
+      var b = boxes[i];
+      if (!overlapXZ(b, P.pos.x, P.pos.z, P.radius)) continue;
+      if (P.vel.y <= 0 && P.pos.y >= b.y1 - 0.02 && ny <= b.y1){
+        ny = b.y1; P.vel.y = 0; wasGrounded = true;
+      } else if (P.vel.y > 0 && P.pos.y + P.height <= b.y0 + 0.02 && ny + P.height >= b.y0){
+        ny = b.y0 - P.height; P.vel.y = 0;
+      }
+    }
+    if (ny <= 0){ ny = 0; P.vel.y = 0; wasGrounded = true; }
+    P.pos.y = ny;
+    // landing kills some momentum so a fast jump sticks instead of sliding off
+    if (wasGrounded && !P.grounded){
+      P.vel.x *= 0.55;
+      P.vel.z *= 0.55;
+    }
+    P.grounded = wasGrounded;
+
+    // horizontal, axis by axis so a wall stops one axis and you slide on the other
+    var nx = P.pos.x + P.vel.x * h;
+    for (var j=0;j<boxes.length;j++){
+      var bx = boxes[j];
+      if (P.pos.y + P.height <= bx.y0 + 0.01 || P.pos.y >= bx.y1 - 0.01) continue;
+      if (nx + P.radius > bx.x0 && nx - P.radius < bx.x1 && P.pos.z + P.radius > bx.z0 && P.pos.z - P.radius < bx.z1){
+        nx = P.vel.x > 0 ? bx.x0 - P.radius : bx.x1 + P.radius;
+        P.vel.x = 0;
+      }
+    }
+    for (var k=0;k<walls.length;k++){
+      var w = walls[k];
+      if (P.pos.y + P.height <= w.y0 + 0.01 || P.pos.y >= w.y1 - 0.01) continue;
+      if (nx + P.radius > w.x0 && nx - P.radius < w.x1 && P.pos.z + P.radius > w.z0 && P.pos.z - P.radius < w.z1){
+        nx = P.vel.x > 0 ? w.x0 - P.radius : w.x1 + P.radius; P.vel.x = 0;
+      }
+    }
+    P.pos.x = nx;
+
+    var nz = P.pos.z + P.vel.z * h;
+    for (var m=0;m<boxes.length;m++){
+      var bz = boxes[m];
+      if (P.pos.y + P.height <= bz.y0 + 0.01 || P.pos.y >= bz.y1 - 0.01) continue;
+      if (P.pos.x + P.radius > bz.x0 && P.pos.x - P.radius < bz.x1 && nz + P.radius > bz.z0 && nz - P.radius < bz.z1){
+        nz = P.vel.z > 0 ? bz.z0 - P.radius : bz.z1 + P.radius;
+        P.vel.z = 0;
+      }
+    }
+    for (var n=0;n<walls.length;n++){
+      var w2 = walls[n];
+      if (P.pos.y + P.height <= w2.y0 + 0.01 || P.pos.y >= w2.y1 - 0.01) continue;
+      if (P.pos.x + P.radius > w2.x0 && P.pos.x - P.radius < w2.x1 && nz + P.radius > w2.z0 && nz - P.radius < w2.z1){
+        nz = P.vel.z > 0 ? w2.z0 - P.radius : w2.z1 + P.radius; P.vel.z = 0;
+      }
+    }
+    P.pos.z = nz;
+
+    var tdx = P.pos.x - TANK.x, tdz = P.pos.z - TANK.z;
+    var td = Math.hypot(tdx, tdz);
+    if (td < TANK.r + P.radius && P.pos.y < 6.9){
+      var push = (TANK.r + P.radius - td);
+      P.pos.x += (tdx/td) * push; P.pos.z += (tdz/td) * push;
+    }
+  }
+}
+
+// ---------------------------------------------------------------- game flow
+function setCP(i){
+  if (i <= G.cp) return;
+  G.cp = i;
+  G.msg = 'CHECKPOINT — ' + CHECKPOINTS[i].label;
+  G.msgT = 1.6;
+  document.querySelector('#cp b').textContent = CHECKPOINTS[i].label;
+}
+
+function reset(full){
+  var c = CHECKPOINTS[full ? 0 : G.cp];
+  P.pos.set(c.x, c.y + 0.02, c.z);
+  P.vel.set(0, 0, 0);
+  P.grounded = true;
+  if (full){ G.cp = 0; G.time = 0; G.running = false;
+    document.querySelector('#cp b').textContent = 'START'; }
+}
+
+function start(){
+  document.getElementById('screen').style.display = 'none';
+  document.getElementById('hud').classList.add('on');
+  if (IS_TOUCH) document.getElementById('jump').classList.add('on');
+  G.mode = 'play';
+  G.running = false; G.time = 0; G.cp = 0;
+  reset(true);
+  if (!IS_TOUCH){ var p = canvas.requestPointerLock(); if (p && p.catch) p.catch(function(){}); }
+}
+
+function finish(){
+  G.mode = 'done';
+  G.running = false;
+  if (document.exitPointerLock) document.exitPointerLock();
+  var t = G.time.toFixed(2);
+  var best = false;
+  if (G.best === null || G.time < G.best){ G.best = G.time; best = true;
+    try { localStorage.setItem('dl_course_best', String(G.best)); } catch(e){} }
+  var s = document.getElementById('screen');
+  s.style.display = 'flex';
+  s.innerHTML = '<h1 style="color:#9dffbe">' + t + '</h1>' +
+    '<h2>' + (best ? 'NEW BEST' : 'BEST ' + G.best.toFixed(2)) + '</h2>' +
+    '<p>You made the gate without touching the ground.</p>' +
+    '<button id="go">RUN AGAIN</button>';
+  document.getElementById('go').addEventListener('click', function(){ location.reload(); });
+}
+
+// ---------------------------------------------------------------- loop
+var clock = new THREE.Clock();
+function frame(){
+  var dt = Math.min(clock.getDelta(), 0.05);
+  if (G.mode === 'play') update(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+function update(dt){
+  var fwd = 0, side = 0;
+  if (keys['KeyW'] || keys['ArrowUp']) fwd += 1;
+  if (keys['KeyS'] || keys['ArrowDown']) fwd -= 1;
+  if (keys['KeyA'] || keys['ArrowLeft']) side -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) side += 1;
+  if (STICK.active){ fwd += -STICK.y; side += STICK.x; }
+
+  var moving = Math.abs(fwd) + Math.abs(side) > 0.12;
+  var running = (keys['ShiftLeft'] || keys['ShiftRight'] || (STICK.active && Math.hypot(STICK.x, STICK.y) > 0.9)) && moving;
+
+  if (moving && !G.running){ G.running = true; }
+  if (G.running) G.time += dt;
+
+  var speed = running ? 4.5 : 2.8;
+  var len = Math.hypot(fwd, side);
+  if (len > 1){ fwd /= len; side /= len; len = 1; }
+
+  var sinY = Math.sin(P.yaw), cosY = Math.cos(P.yaw);
+  var wishX = (side*cosY - fwd*sinY);
+  var wishZ = (-side*sinY - fwd*cosY);
+
+  // snappier ground control, floatier in the air
+  var accel = P.grounded ? 42 : 11;
+  P.vel.x += (wishX*speed - P.vel.x) * Math.min(1, accel*dt);
+  P.vel.z += (wishZ*speed - P.vel.z) * Math.min(1, accel*dt);
+
+  // jump with coyote time and a small input buffer
+  P.coyote = P.grounded ? 0.10 : Math.max(0, P.coyote - dt);
+  P.jumpBuffer = Math.max(0, P.jumpBuffer - dt);
+  if (P.jumpBuffer > 0 && P.coyote > 0){
+    P.vel.y = 6.4;
+    P.grounded = false; P.coyote = 0; P.jumpBuffer = 0;
+  }
+
+  moveAndCollide(dt);
+
+  // the yard floor is out of bounds once you leave the first pad
+  if (P.pos.y < 0.05 && P.grounded && G.running){
+    reset(false);
+    G.msg = G.cp > 0 ? 'BACK TO ' + CHECKPOINTS[G.cp].label : 'BACK TO THE START';
+    G.msgT = 1.5;
+  }
+
+  // checkpoints and finish
+  for (var i=1;i<CHECKPOINTS.length;i++){
+    var c = CHECKPOINTS[i];
+    if (Math.abs(P.pos.x - c.x) < 1.3 && Math.abs(P.pos.z - c.z) < 1.3 && Math.abs(P.pos.y - c.y) < 0.6) setCP(i);
+  }
+  if (Math.abs(P.pos.x - FINISH.x) < 1.7 && Math.abs(P.pos.z - FINISH.z) < 1.6 && Math.abs(P.pos.y - FINISH.y) < 0.8){
+    finish(); return;
+  }
+
+  // camera
+  camera.position.set(P.pos.x, P.pos.y + 1.55 + (moving && P.grounded ? Math.sin(G.time*11)*0.016 : 0), P.pos.z);
+  camera.rotation.set(P.pitch, P.yaw, 0);
+
+  // hud
+  document.querySelector('#clock').innerHTML = G.time.toFixed(2) + '<small>RUN</small>';
+  document.getElementById('best').innerHTML = G.best === null ? 'NO TIME SET' : 'BEST ' + G.best.toFixed(2);
+  if (G.msgT > 0){ G.msgT -= dt; document.getElementById('msg').textContent = G.msg; }
+  else document.getElementById('msg').textContent = '';
+}
+
+document.getElementById('go').addEventListener('click', start);
+window.addEventListener('resize', function(){
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+});
+
+window.COURSE = {
+  state: function(){
+    return { mode:G.mode, time:+G.time.toFixed(2), cp:G.cp, grounded:P.grounded,
+             pos:[+P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2)],
+             vel:[+P.vel.x.toFixed(2), +P.vel.y.toFixed(2), +P.vel.z.toFixed(2)],
+             pads: boxes.length, ready: window.YARD_READY === true };
+  },
+  place: function(x, y, z){ P.pos.set(x, y, z); P.vel.set(0,0,0); },
+  look: function(yaw, pitch){ P.yaw = yaw; P.pitch = pitch || -0.1; },
+  jump: function(){ P.jumpBuffer = 0.16; },
+  start: start
+};
+frame();
+})();
+</script>
+</body>
+</html>
