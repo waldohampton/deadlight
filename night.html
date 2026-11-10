@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>DEADLIGHT night yard</title>
+<style>
+  html,body{margin:0;height:100%;background:#04060a;overflow:hidden;
+    font-family:"Cascadia Mono",Consolas,monospace;color:#d8d5c8;}
+  #v{position:fixed;top:0;left:0;width:100%;height:100%;display:block;}
+  #vig{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at 50% 48%,rgba(0,0,0,0) 42%,rgba(0,0,0,.7) 100%);}
+  #cap{position:fixed;left:22px;bottom:20px;font-size:10px;letter-spacing:2px;
+    color:rgba(216,213,200,.38);text-transform:uppercase;line-height:2;pointer-events:none;}
+  #load{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:#04060a;font-size:11px;letter-spacing:4px;color:#5f665e;transition:opacity .5s;}
+  #btn{position:fixed;right:22px;bottom:18px;z-index:5;background:none;border:1px solid rgba(255,179,71,.4);
+    color:#ffb347;font:inherit;font-size:9px;letter-spacing:2px;padding:8px 12px;cursor:pointer;}
+</style>
+</head>
+<body>
+<canvas id="v"></canvas>
+<div id="vig"></div>
+<div id="cap">DEADLIGHT / NIGHT YARD<br>BAKED PRACTICALS · WET GROUND · TORCH LIVE</div>
+<button id="btn">LIGHTMAP ON</button>
+<div id="load">LOADING</div>
+<script src="three.min.js"></script>
+<script src="GLTFLoader.js"></script>
+<script>
+(function(){
+'use strict';
+if (typeof THREE === 'undefined') { document.getElementById('load').textContent = 'three.js missing'; return; }
+
+var canvas = document.getElementById('v');
+var renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.18;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05080d);
+scene.fog = new THREE.FogExp2(0x0b1219, 0.016);
+
+var camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.05, 300);
+camera.position.set(0.4, 1.62, 8.4);
+camera.lookAt(0.0, 2.3, -26);
+
+var torch = new THREE.SpotLight(0xffe0b8, 1.6, 22, 0.6, 0.8, 1.3);
+torch.position.set(0.1, -0.05, 0.1);
+torch.target.position.set(0, -0.3, -6);
+torch.castShadow = true;
+torch.shadow.mapSize.set(1024, 1024);
+torch.shadow.bias = -0.0015;
+torch.shadow.normalBias = 0.04;
+camera.add(torch); camera.add(torch.target); scene.add(camera);
+
+// faint moon/sky fill so nothing is dead black
+scene.add(new THREE.HemisphereLight(0x2a3d5c, 0x0a0c10, 0.32));
+
+// soft glow sprite for fake bloom
+function glowTexture(){
+  var c = document.createElement('canvas'); c.width = c.height = 128;
+  var g = c.getContext('2d');
+  var rad = g.createRadialGradient(64,64,0,64,64,64);
+  rad.addColorStop(0,'rgba(255,255,255,1)');
+  rad.addColorStop(0.25,'rgba(255,230,190,0.55)');
+  rad.addColorStop(1,'rgba(255,200,140,0)');
+  g.fillStyle = rad; g.fillRect(0,0,128,128);
+  return new THREE.CanvasTexture(c);
+}
+var GLOW = glowTexture();
+
+var meshes = [], lightmaps = {}, useLM = true;
+var DB = new URLSearchParams(location.search).get('d') || 'bakenight';
+var loader = new THREE.GLTFLoader();
+
+loader.load(DB + '/night.glb', function(gltf){
+  scene.add(gltf.scene);
+
+  var bbox = new THREE.Box3();
+  gltf.scene.traverse(function(o){
+    if (!o.isMesh) return;
+    meshes.push(o);
+    o.castShadow = true; o.receiveShadow = true;
+    var g = o.geometry;
+    if (g.attributes.uv && !g.attributes.uv2) g.setAttribute('uv2', g.attributes.uv);
+
+    var m = o.material;
+    if (m && m.emissive && (m.emissiveMap || m.emissive.getHex() !== 0)) {
+      // glTF emissive strength is not read by this loader, so push it manually
+      m.emissiveIntensity = m.emissiveMap ? 2.2 : 6.0;
+      m.toneMapped = true;
+      // fake bloom: additive billboard sized to the object
+      var b = new THREE.Box3().setFromObject(o);
+      var s = b.getSize(new THREE.Vector3());
+      var c = b.getCenter(new THREE.Vector3());
+      var size = Math.max(s.x, s.y, s.z) * 1.9;
+      var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: GLOW, color: m.emissive.clone().multiplyScalar(0.55),
+        blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.5
+      }));
+      sp.position.copy(c);
+      sp.scale.set(size, size, 1);
+      scene.add(sp);
+      bbox.union(b);
+    }
+  });
+
+  // NOTE: a PMREM capture of this scene produces inf (emissive + sprite glows) and ACES
+  // turns the whole frame to NaN black. Reflections stay off until the HDR range is sane.
+
+  var pending = meshes.length, cache = {};
+  function textureFor(m, done){
+    var keys = [m.name];
+    var i = 0;
+    (function next(){
+      if (i >= keys.length) { done(null); return; }
+      var k = keys[i++];
+      if (cache[k]) { done(cache[k]); return; }
+      new THREE.TextureLoader().load(DB + '/' + k + '_lm.png', function(t){
+        t.encoding = THREE.sRGBEncoding;
+        t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        cache[k] = t; done(t);
+      }, undefined, function(){ next(); });
+    })();
+  }
+  meshes.forEach(function(m){
+    textureFor(m, function(t){
+      if (t) lightmaps[m.uuid] = t;
+      if (--pending === 0) apply();
+    });
+  });
+
+  function apply(){
+    meshes.forEach(function(m){
+      var t = lightmaps[m.uuid];
+      if (!t) return;
+      m.material.lightMap = t;
+      m.material.lightMapIntensity = 1.7;
+      m.material.needsUpdate = true;
+    });
+    document.getElementById('load').style.opacity = '0';
+    setTimeout(function(){ document.getElementById('load').style.display = 'none'; }, 500);
+    window.NIGHT = { ready: true, meshes: meshes.length, lit: meshes.filter(function(m){ return !!m.material.lightMap; }).length };
+  }
+}, undefined, function(e){
+  document.getElementById('load').textContent = 'GLB FAILED';
+  console.error(e);
+});
+
+document.getElementById('btn').addEventListener('click', function(){
+  useLM = !useLM;
+  meshes.forEach(function(m){
+    m.material.lightMap = useLM ? lightmaps[m.uuid] : null;
+    m.material.needsUpdate = true;
+  });
+  this.textContent = useLM ? 'LIGHTMAP ON' : 'LIGHTMAP OFF';
+});
+
+window.addEventListener('resize', function(){
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+});
+
+window.SCN = scene; window.CAM = camera; window.RND = renderer;
+(function loop(){ renderer.render(scene, camera); requestAnimationFrame(loop); })();
+})();
+</script>
+</body>
+</html>
