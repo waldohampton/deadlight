@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>DEADLIGHT — night yard slice</title>
+<style>
+  html,body{margin:0;height:100%;background:#04060a;overflow:hidden;touch-action:none;
+    font-family:"Cascadia Mono",Consolas,monospace;color:#d8d5c8;-webkit-user-select:none;user-select:none;}
+  #v{position:fixed;top:0;left:0;width:100%;height:100%;display:block;}
+  #vig{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at 50% 48%,rgba(0,0,0,0) 36%,rgba(0,0,0,.72) 100%);}
+  #hud{position:fixed;inset:0;pointer-events:none;opacity:0;transition:opacity .4s;}
+  #hud.on{opacity:1;}
+  .bar{position:absolute;left:22px;height:5px;background:rgba(255,255,255,.12);}
+  .bar i{display:block;height:100%;width:100%;background:#8fd0a0;transition:width .08s linear;}
+  #stamBar{top:26px;width:170px;}
+  #noiseBar{top:38px;width:170px;}
+  #noiseBar i{background:#ffb347;}
+  .lbl{position:absolute;left:22px;font-size:9px;letter-spacing:2.5px;color:rgba(216,213,200,.5);}
+  #stamLbl{top:12px;} #noiseLbl{top:48px;}
+  #status{position:absolute;right:22px;top:20px;font-size:10px;letter-spacing:3px;text-align:right;
+    color:rgba(216,213,200,.6);line-height:2;}
+  #status b{color:#ff6b4a;font-weight:normal;}
+  #dist{position:absolute;right:22px;bottom:20px;font-size:9px;letter-spacing:2px;color:rgba(216,213,200,.35);}
+  #cue{position:absolute;left:0;right:0;bottom:70px;text-align:center;font-size:12px;
+    letter-spacing:4px;color:rgba(255,179,71,.85);text-shadow:0 0 18px rgba(255,120,40,.5);}
+  #screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;background:rgba(4,6,10,.86);z-index:10;text-align:center;padding:20px;}
+  #screen h1{font-size:26px;letter-spacing:8px;font-weight:normal;margin:0 0 6px;}
+  #screen h2{font-size:10px;letter-spacing:4px;color:#7d8478;font-weight:normal;margin:0 0 26px;}
+  #screen p{font-size:11px;letter-spacing:1.5px;line-height:2.1;color:#9aa093;margin:0 0 22px;max-width:460px;}
+  #screen b{color:#ffb347;font-weight:normal;}
+  #go{border:1px solid rgba(255,179,71,.5);background:none;color:#ffb347;font:inherit;
+    font-size:11px;letter-spacing:4px;padding:14px 34px;cursor:pointer;}
+  #go:hover{background:rgba(255,179,71,.08);}
+  #stick{position:fixed;left:26px;bottom:34px;width:118px;height:118px;border-radius:50%;
+    border:1px solid rgba(255,255,255,.13);display:none;}
+  #stick.on{display:block;}
+  #knob{position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px 0 0 -24px;
+    border-radius:50%;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);}
+</style>
+</head>
+<body>
+<canvas id="v"></canvas>
+<div id="vig"></div>
+
+<div id="hud">
+  <div class="lbl" id="stamLbl">BREATH</div>
+  <div class="bar" id="stamBar"><i></i></div>
+  <div class="lbl" id="noiseLbl">NOISE</div>
+  <div class="bar" id="noiseBar"><i></i></div>
+  <div id="status"></div>
+  <div id="dist"></div>
+  <div id="cue"></div>
+</div>
+
+<div id="stick"><div id="knob"></div></div>
+
+<div id="screen">
+  <h1>DEADLIGHT</h1>
+  <h2>NIGHT YARD — SLICE 1</h2>
+  <p>
+    Walk and it only has a rough idea where you are.<br>
+    <b>Run</b> and it hears exactly where you are.<br>
+    Your breath is the budget.<br><br>
+    Reach the green lamp at the tank.<br>
+    <span style="color:#6c7268">WASD / arrows to move · mouse to look · SHIFT to run</span>
+  </p>
+  <button id="go">ENTER YARD</button>
+</div>
+
+<script src="three.min.js"></script>
+<script src="GLTFLoader.js"></script>
+<script>
+(function(){
+'use strict';
+var canvas = document.getElementById('v');
+var renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true, powerPreference:'high-performance'});
+var IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, IS_TOUCH ? 1.5 : 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.18;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05080d);
+scene.fog = new THREE.FogExp2(0x0b1219, 0.014);
+
+var camera = new THREE.PerspectiveCamera(62, window.innerWidth/window.innerHeight, 0.05, 300);
+camera.rotation.order = 'YXZ';
+camera.position.set(0.4, 1.62, 8.4);
+
+var torch = new THREE.SpotLight(0xffe2bc, 2.2, 26, 0.62, 0.82, 1.25);
+torch.position.set(0.12, -0.06, 0.1);
+torch.target.position.set(0, -0.34, -6);
+torch.castShadow = true;
+torch.shadow.mapSize.set(512, 512);
+torch.shadow.bias = -0.0015;
+torch.shadow.normalBias = 0.04;
+camera.add(torch); camera.add(torch.target); scene.add(camera);
+
+scene.add(new THREE.HemisphereLight(0x2a3d5c, 0x0a0c10, 0.30));
+
+// ---------------------------------------------------------------- world
+var colliders = [
+  {x0:-8.6, x1:8.6, z0:-2.55, z1:-1.85},          // the railing
+  {x0:-3.05, x1:-2.15, z0:-0.25, z1:0.65},        // crate a
+  {x0:1.85, x1:2.55, z0:-0.95, z1:-0.25}          // crate b
+];
+var TANK = {x:-10.5, z:-12.0, r:3.25};
+
+function blocked(x, z, pad){
+  for (var i=0;i<colliders.length;i++){
+    var c = colliders[i];
+    if (x > c.x0-pad && x < c.x1+pad && z > c.z0-pad && z < c.z1+pad) return true;
+  }
+  var dx = x-TANK.x, dz = z-TANK.z;
+  if (dx*dx + dz*dz < (TANK.r+pad)*(TANK.r+pad)) return true;
+  if (x < -23 || x > 23 || z > 22 || z < -30) return true;
+  return false;
+}
+
+// ---------------------------------------------------------------- the thing
+var creature = new THREE.Group();
+(function(){
+  var dark = new THREE.MeshStandardMaterial({color:0x070809, roughness:0.98, metalness:0});
+  var torso = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.17, 1.24, 10), dark);
+  torso.position.y = 1.14; creature.add(torso);
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), dark);
+  head.position.y = 1.9; head.scale.set(0.92, 1.15, 0.95); creature.add(head);
+  for (var s=-1; s<=1; s+=2){
+    var arm = new THREE.Mesh(new THREE.CylinderGeometry(0.055,0.035,1.3,6), dark);
+    arm.position.set(0.34*s, 1.16, 0.02); arm.rotation.z = -0.14*s; creature.add(arm);
+    var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.075,0.05,1.0,6), dark);
+    leg.position.set(0.11*s, 0.42, 0); creature.add(leg);
+  }
+  creature.traverse(function(o){ if(o.isMesh){ o.castShadow = true; } });
+  // eyes: the only thing you will see of it
+  var eyeMat = new THREE.MeshBasicMaterial({color:0xffe0b0});
+  for (var e=-1; e<=1; e+=2){
+    var eye = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), eyeMat);
+    eye.position.set(0.065*e, 1.93, -0.16); creature.add(eye);
+  }
+  var glow = new THREE.PointLight(0xffd0a0, 0.5, 3.2, 2);
+  glow.position.set(0, 1.93, -0.2); creature.add(glow);
+})();
+creature.position.set(16, 0, -22);
+scene.add(creature);
+
+// exit marker
+var exitPos = {x:-6.4, z:-14.2};
+var exitLamp = new THREE.PointLight(0x86ffb0, 1.4, 7, 2);
+exitLamp.position.set(exitPos.x, 1.5, exitPos.z);
+scene.add(exitLamp);
+var exitBall = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshBasicMaterial({color:0x9dffbe}));
+exitBall.position.set(exitPos.x, 1.5, exitPos.z);
+scene.add(exitBall);
+
+// ---------------------------------------------------------------- load baked yard
+var meshes = [], lightmaps = {}, DB = 'bakenight';
+new THREE.GLTFLoader().load(DB + '/night.glb', function(gltf){
+  scene.add(gltf.scene);
+  gltf.scene.traverse(function(o){
+    if (!o.isMesh) return;
+    meshes.push(o);
+    o.castShadow = true; o.receiveShadow = true;
+    if (o.geometry.attributes.uv && !o.geometry.attributes.uv2)
+      o.geometry.setAttribute('uv2', o.geometry.attributes.uv);
+    var m = o.material;
+    if (m && m.emissive && (m.emissiveMap || m.emissive.getHex() !== 0))
+      m.emissiveIntensity = m.emissiveMap ? 2.2 : 6.0;
+  });
+  var pending = meshes.length;
+  meshes.forEach(function(m){
+    new THREE.TextureLoader().load(DB + '/' + m.name + '_lm.png', function(t){
+      t.encoding = THREE.sRGBEncoding;
+      t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      m.material.lightMap = t;
+      m.material.lightMapIntensity = 1.7;
+      m.material.needsUpdate = true;
+      if (--pending === 0) window.YARD_READY = true;
+    }, undefined, function(){ if (--pending === 0) window.YARD_READY = true; });
+  });
+}, undefined, function(e){ console.error('glb', e); });
+
+// ---------------------------------------------------------------- state
+var G = {
+  mode: 'title', stamina: 100, noise: 0, noiseSmooth: 0,
+  yaw: 0, pitch: -0.02, t: 0, hunt: 0, caught: 0,
+  lastHeard: new THREE.Vector3(16, 0, -22), chase: false, dist: 99
+};
+var keys = {};
+var STICK = {active:false, x:0, y:0, id:null};
+var LOOK = {active:false, id:null, lx:0, ly:0};
+
+document.addEventListener('keydown', function(e){
+  keys[e.code] = true;
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') e.preventDefault();
+  if (G.mode === 'title' && (e.code === 'Enter' || e.code === 'Space')) start();
+});
+document.addEventListener('keyup', function(e){ keys[e.code] = false; });
+
+canvas.addEventListener('click', function(){
+  if (G.mode === 'play' && !IS_TOUCH && document.pointerLockElement !== canvas){
+    var p = canvas.requestPointerLock();
+    if (p && p.catch) p.catch(function(){});
+  }
+});
+document.addEventListener('mousemove', function(e){
+  if (G.mode !== 'play') return;
+  if (document.pointerLockElement !== canvas && !LOOK.active) return;
+  if (LOOK.active) return;
+  G.yaw   -= e.movementX * 0.0022;
+  G.pitch -= e.movementY * 0.0019;
+  G.pitch = Math.max(-1.15, Math.min(1.15, G.pitch));
+});
+
+// touch: left stick moves, right half looks
+canvas.addEventListener('touchstart', function(e){
+  for (var i=0;i<e.changedTouches.length;i++){
+    var t = e.changedTouches[i];
+    if (t.clientX < window.innerWidth*0.45 && !STICK.active){
+      STICK.active = true; STICK.id = t.identifier; STICK.cx = t.clientX; STICK.cy = t.clientY;
+      document.getElementById('stick').classList.add('on');
+    } else if (!LOOK.active){
+      LOOK.active = true; LOOK.id = t.identifier; LOOK.lx = t.clientX; LOOK.ly = t.clientY;
+    }
+  }
+  e.preventDefault();
+}, {passive:false});
+
+canvas.addEventListener('touchmove', function(e){
+  for (var i=0;i<e.changedTouches.length;i++){
+    var t = e.changedTouches[i];
+    if (t.identifier === STICK.id){
+      var dx = (t.clientX - STICK.cx)/34, dy = (t.clientY - STICK.cy)/34;
+      var len = Math.hypot(dx, dy) || 1;
+      if (len > 1){ dx/=len; dy/=len; }
+      STICK.x = dx; STICK.y = dy;
+      var k = document.getElementById('knob');
+      k.style.transform = 'translate(' + (dx*30) + 'px,' + (dy*30) + 'px)';
+    } else if (t.identifier === LOOK.id){
+      G.yaw   -= (t.clientX - LOOK.lx) * 0.0052;
+      G.pitch -= (t.clientY - LOOK.ly) * 0.0042;
+      G.pitch = Math.max(-1.15, Math.min(1.15, G.pitch));
+      LOOK.lx = t.clientX; LOOK.ly = t.clientY;
+    }
+  }
+  e.preventDefault();
+}, {passive:false});
+
+canvas.addEventListener('touchend', function(e){
+  for (var i=0;i<e.changedTouches.length;i++){
+    var t = e.changedTouches[i];
+    if (t.identifier === STICK.id){
+      STICK.active = false; STICK.id = null; STICK.x = STICK.y = 0;
+      document.getElementById('knob').style.transform = '';
+      document.getElementById('stick').classList.remove('on');
+    }
+    if (t.identifier === LOOK.id){ LOOK.active = false; LOOK.id = null; }
+  }
+}, {passive:false});
+
+// ---------------------------------------------------------------- audio: breath + heartbeat
+var AC = null, droneGain = null, heartbeatTimer = null;
+function initAudio(){
+  if (AC) return;
+  try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ return; }
+  var osc = AC.createOscillator(), g = AC.createGain(), lp = AC.createBiquadFilter();
+  osc.type = 'sawtooth'; osc.frequency.value = 42;
+  lp.type = 'lowpass'; lp.frequency.value = 180;
+  g.gain.value = 0.055;
+  osc.connect(lp); lp.connect(g); g.connect(AC.destination); osc.start();
+  droneGain = g;
+  beat();
+}
+function beat(){
+  if (!AC || G.mode !== 'play'){ heartbeatTimer = setTimeout(beat, 900); return; }
+  var near = Math.max(0, 1 - G.dist/26);
+  var t0 = AC.currentTime;
+  var o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(58 + near*26, t0);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(0.04 + near*0.22, t0 + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.30);
+  o.connect(g); g.connect(AC.destination); o.start(t0); o.stop(t0 + 0.34);
+  heartbeatTimer = setTimeout(beat, 1300 - near*1000);
+}
+
+// ---------------------------------------------------------------- loop
+function start(){
+  document.getElementById('screen').style.display = 'none';
+  document.getElementById('hud').classList.add('on');
+  G.mode = 'play';
+  initAudio();
+  if (!IS_TOUCH){
+    var p = canvas.requestPointerLock();
+    if (p && p.catch) p.catch(function(){});
+  }
+}
+
+function endGame(won){
+  G.mode = won ? 'won' : 'caught';
+  if (document.exitPointerLock) document.exitPointerLock();
+  var s = document.getElementById('screen');
+  s.style.display = 'flex';
+  s.innerHTML = won
+    ? '<h1 style="color:#9dffbe">THROUGH</h1><h2>YOU MADE THE TANK</h2>' +
+      '<p>It never found you. Try it again and run the first half.</p>' +
+      '<button id="go">AGAIN</button>'
+    : '<h1 style="color:#ff6b4a">TAKEN</h1><h2>IT HEARD YOU</h2>' +
+      '<p>Running is loud. Walking is slow. That is the whole game.</p>' +
+      '<button id="go">AGAIN</button>';
+  document.getElementById('go').addEventListener('click', function(){ location.reload(); });
+}
+
+var clock = new THREE.Clock();
+var creatureTarget = new THREE.Vector3(16, 0, -22);
+
+function step(){
+  var dt = Math.min(clock.getDelta(), 0.05);
+  if (G.mode === 'play') update(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(step);
+}
+
+function update(dt){
+  G.t += dt;
+
+  // ---- input
+  var fwd = 0, side = 0;
+  if (keys['KeyW'] || keys['ArrowUp']) fwd += 1;
+  if (keys['KeyS'] || keys['ArrowDown']) fwd -= 1;
+  if (keys['KeyA'] || keys['ArrowLeft']) side -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) side += 1;
+  if (STICK.active){ fwd += -STICK.y; side += STICK.x; }
+
+  var moving = Math.abs(fwd) + Math.abs(side) > 0.08;
+  var wantRun = (keys['ShiftLeft'] || keys['ShiftRight']) && G.stamina > 6;
+  if (IS_TOUCH && STICK.active && Math.hypot(STICK.x, STICK.y) > 0.88 && G.stamina > 6){
+    wantRun = true;   // push the stick to the rim to run
+  }
+  var running = wantRun && moving;
+
+  // ---- stamina and noise
+  if (running){
+    G.stamina = Math.max(0, G.stamina - 27*dt);
+    G.noise = 1.0;
+  } else if (moving){
+    G.stamina = Math.min(100, G.stamina + 9*dt);
+    G.noise = 0.28;
+  } else {
+    G.stamina = Math.min(100, G.stamina + 17*dt);
+    G.noise = 0.06;
+  }
+  G.noiseSmooth += (G.noise - G.noiseSmooth) * Math.min(1, dt*6);
+
+  // ---- movement
+  var speed = running ? 4.7 : 2.25;
+  var len = Math.hypot(fwd, side);
+  if (len > 1){ fwd /= len; side /= len; }
+  var sinY = Math.sin(G.yaw), cosY = Math.cos(G.yaw);
+  var vx = (side*cosY - fwd*sinY) * speed * dt;
+  var vz = (-side*sinY - fwd*cosY) * speed * dt;
+
+  var p = camera.position;
+  if (!blocked(p.x + vx, p.z, 0.34)) p.x += vx;
+  if (!blocked(p.x, p.z + vz, 0.34)) p.z += vz;
+
+  // head bob + breath
+  var bob = moving ? Math.sin(G.t * (running ? 13 : 8)) * (running ? 0.035 : 0.018) : 0;
+  p.y = 1.62 + bob;
+  camera.rotation.set(G.pitch, G.yaw, running ? Math.sin(G.t*13)*0.006 : 0);
+
+  // ---- creature
+  var c = creature.position;
+  var dToP = Math.hypot(c.x - p.x, c.z - p.z);
+  G.dist = dToP;
+  var hearR = 2.5 + G.noiseSmooth * 27;
+
+  if (dToP < hearR){
+    G.lastHeard.set(p.x, 0, p.z);
+    G.hunt = 4.0;
+  } else if (G.hunt > 0){
+    G.hunt -= dt;
+  }
+  G.chase = G.hunt > 0;
+
+  if (G.chase){
+    creatureTarget.set(G.lastHeard.x, 0, G.lastHeard.z);
+  } else if (G.t % 5 < dt){
+    creatureTarget.set(G.lastHeard.x + (Math.random()-0.5)*12, 0, G.lastHeard.z + (Math.random()-0.5)*12);
+  }
+
+  var dx = creatureTarget.x - c.x, dz = creatureTarget.z - c.z;
+  var dl = Math.hypot(dx, dz) || 1;
+  var cspeed = G.chase ? 3.45 : 1.55;
+  var mx = (dx/dl) * cspeed * dt, mz = (dz/dl) * cspeed * dt;
+  if (!blocked(c.x + mx, c.z, 0.3)) c.x += mx;
+  if (!blocked(c.x, c.z + mz, 0.3)) c.z += mz;
+  // if stuck on a corner, slide sideways
+  if (Math.abs(mx) < 0.001 && Math.abs(mz) < 0.001){
+    if (!blocked(c.x + dt*cspeed*0.7, c.z + dt*cspeed*0.7, 0.3)){ c.x += dt*cspeed*0.7; c.z += dt*cspeed*0.7; }
+  }
+  creature.rotation.y = Math.atan2(dx, dz) + Math.PI;
+
+  // ---- win / lose
+  if (dToP < 1.25){ endGame(false); return; }
+  if (Math.hypot(p.x - exitPos.x, p.z - exitPos.z) < 2.0){ endGame(true); return; }
+
+  // ---- hud
+  document.querySelector('#stamBar i').style.width = G.stamina.toFixed(0) + '%';
+  document.querySelector('#noiseBar i').style.width = (G.noiseSmooth*100).toFixed(0) + '%';
+  var st = document.getElementById('status');
+  st.innerHTML = G.chase
+    ? '<b>IT HEARD YOU</b><br>' + (G.hunt).toFixed(1) + 's'
+    : 'IT LOST YOU<br>&nbsp;';
+  document.getElementById('dist').textContent = 'DISTANCE ' + dToP.toFixed(1) + ' M';
+  document.getElementById('cue').textContent =
+    Math.hypot(p.x - exitPos.x, p.z - exitPos.z) < 6 ? 'THE LAMP IS CLOSE' : '';
+}
+
+document.getElementById('go').addEventListener('click', start);
+window.addEventListener('resize', function(){
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+});
+
+window.GAME = { state: function(){ return {mode:G.mode, stamina:G.stamina, dist:G.dist, chase:G.chase,
+  player:[camera.position.x, camera.position.z], creature:[creature.position.x, creature.position.z],
+  exit:[exitPos.x, exitPos.z]}; },
+  teleport: function(x, z){ camera.position.x = x; camera.position.z = z; },
+  start: start };
+step();
+})();
+</script>
+</body>
+</html>
