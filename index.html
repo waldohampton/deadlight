@@ -79,7 +79,7 @@
     border:1px solid rgba(232,226,214,.18);pointer-events:none;display:none;}
   #knob{position:absolute;left:50%;top:50%;width:42px;height:42px;margin:-21px 0 0 -21px;
     border-radius:50%;background:rgba(255,179,71,.22);border:1px solid rgba(255,179,71,.5);}
-  #fade{position:fixed;inset:0;z-index:11;background:#000;opacity:1;pointer-events:none;}
+  #fade{position:fixed;inset:0;z-index:11;background:#000;opacity:0;pointer-events:none;}
   #err{position:fixed;inset:0;z-index:20;display:none;align-items:center;justify-content:center;
     padding:40px;text-align:center;background:#000;color:#ff5a49;font-size:12px;line-height:2;}
 </style>
@@ -974,6 +974,8 @@ function hideScreen(){
 
 function titleScreen(){
   G.state = 'title';
+  ui.fade.style.transition = 'opacity .4s';
+  ui.fade.style.opacity = '0';
   ui.hud.classList.remove('on');
   ui.bars.style.opacity = '1';
   showScreen(
@@ -1032,6 +1034,7 @@ function onScreenButton(e){
 function caught(){
   if (G.state !== 'play') return;
   G.state = 'caught';
+  ui.fade.style.opacity = '0';
   G.caughtT = 0;
   player.sprint = false;
   if (document.pointerLockElement) document.exitPointerLock();
@@ -1058,6 +1061,7 @@ function caught(){
 function escaped(){
   if (G.state !== 'play') return;
   G.state = 'cleared';
+  ui.fade.style.opacity = '0';
   if (document.pointerLockElement) document.exitPointerLock();
   Audio2.chime();
   ui.heart.classList.remove('on');
