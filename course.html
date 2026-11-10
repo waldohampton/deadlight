@@ -258,49 +258,113 @@ var AV = { phase: 0, yaw: 0, legL:null, legR:null, armL:null, armR:null, torso:n
 })();
 
 
-// ---------------------------------------------------------------- rigged character
-var MIXER = null, CUR = null, CURNAME = '', HOLDER = null, AV_SCALE = 1;
-new THREE.GLTFLoader().load('models/Soldier.glb', function(gltf){
-  var m = gltf.scene;
-  m.traverse(function(o){
-    if (o.isMesh){
-      o.castShadow = true;
-      o.receiveShadow = true;
-      o.frustumCulled = false;
-      if (o.material){ o.material.roughness = Math.min(1, (o.material.roughness||0.8) * 1.05); }
-    }
-  });
-  var bb = new THREE.Box3().setFromObject(m);
-  var sz = bb.getSize(new THREE.Vector3());
-  AV_SCALE = 1.78 / Math.max(0.001, sz.y);
-  m.scale.setScalar(AV_SCALE);
-  m.position.y = -bb.min.y * AV_SCALE;
+// ---------------------------------------------------------------- characters
+var MIXER = null, CUR = null, CURNAME = '', HOLDER = null, ACT = null, CH = null;
 
-  HOLDER = new THREE.Group();
-  HOLDER.rotation.y = 0;            // this rig already faces -z, same as the controls
-  HOLDER.add(m);
-  AV.root.add(HOLDER);
+var CHARS = [
+  { id:'soldier',   label:'SOLDIER',   file:'models/Soldier.glb',         h:1.78, face:0,
+    clips:{ idle:['idle'], walk:['walk'], run:['run'], jump:[] } },
+  { id:'mannequin', label:'MANNEQUIN', file:'models/Xbot.glb',            h:1.80, face:0,
+    clips:{ idle:['idle'], walk:['walk'], run:['run'], jump:[] } },
+  { id:'drone',     label:'DRONE',     file:'models/RobotExpressive.glb', h:1.52, face:Math.PI,
+    clips:{ idle:['idle','standing'], walk:['walking','walk'], run:['running','run'], jump:['jump','walkjump'] } }
+];
 
-  // the hand-built figure was only a placeholder
-  if (AV.hips) AV.hips.visible = false;
-
-  MIXER = new THREE.AnimationMixer(m);
-  var acts = {};
-  gltf.animations.forEach(function(c){ acts[c.name] = MIXER.clipAction(c); });
-  window.__acts = acts;
-  setAnim('Idle');
-  window.AV_READY = true;
-
-  function setAnim(name){ play(name); }
-  function play(name){
-    var next = acts[name];
-    if (!next || CURNAME === name) return;
-    if (CUR) CUR.fadeOut(0.20);
-    next.reset().fadeIn(0.20).play();
-    CUR = next; CURNAME = name;
+function findClip(all, list){
+  for (var i = 0; i < list.length; i++){
+    for (var k in all){ if (k.toLowerCase() === list[i]) return all[k]; }
   }
-  window.__setAnim = play;
-}, undefined, function(e){ console.warn('character failed, keeping boxes', e); });
+  return null;
+}
+
+function play(name, fade){
+  if (!ACT) return;
+  var next = ACT[name] || ACT.run || ACT.walk || ACT.idle;
+  if (!next) return;
+  var f = fade === undefined ? 0.2 : fade;
+  if (next === CUR) { CURNAME = name; return; }
+  if (CUR) CUR.fadeOut(f);
+  next.reset().fadeIn(f).play();
+  CUR = next; CURNAME = name;
+}
+
+function loadChar(id){
+  var cfg = CHARS[0];
+  for (var i = 0; i < CHARS.length; i++) if (CHARS[i].id === id) cfg = CHARS[i];
+  CH = cfg;
+  if (HOLDER && HOLDER.parent) HOLDER.parent.remove(HOLDER);
+  if (CUR) { CUR.stop(); CUR = null; }
+  CURNAME = ''; MIXER = null; ACT = null;
+
+  new THREE.GLTFLoader().load(CH.file, function(gltf){
+    var m = gltf.scene;
+    m.traverse(function(o){
+      if (o.isMesh){
+        o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
+        if (o.material && o.material.roughness !== undefined){
+          o.material.roughness = Math.min(1, (o.material.roughness || 0.8) * 1.05);
+        }
+      }
+    });
+    m.updateMatrixWorld(true);
+    var bb = new THREE.Box3().setFromObject(m);
+    var height = bb.getSize(new THREE.Vector3()).y;
+    var minY = bb.min.y;
+
+    // a SkinnedMesh bounding box is the bind pose, which ignores the skeleton's own scale.
+    // when bones say the rig is a different size, believe the bones.
+    var bmin = Infinity, bmax = -Infinity, v = new THREE.Vector3();
+    m.traverse(function(o){
+      if (o.isBone){ o.getWorldPosition(v); bmin = Math.min(bmin, v.y); bmax = Math.max(bmax, v.y); }
+    });
+    if (bmax > bmin){
+      var boneH = bmax - bmin;
+      if (boneH > height * 1.5 || boneH < height * 0.5){
+        height = boneH * 1.12;      // head top sits above the top bone
+        minY = bmin - boneH * 0.05; // and the sole sits below the ankle bone
+      }
+    }
+
+    var s = CH.h / Math.max(0.001, height);
+    m.scale.setScalar(s);
+    m.position.y = -minY * s;
+
+    HOLDER = new THREE.Group();
+    HOLDER.rotation.y = CH.face;
+    HOLDER.add(m);
+    AV.root.add(HOLDER);
+    if (AV.hips) AV.hips.visible = false;
+
+    MIXER = new THREE.AnimationMixer(m);
+    var all = {};
+    gltf.animations.forEach(function(c){ all[c.name] = MIXER.clipAction(c); });
+    ACT = {
+      idle: findClip(all, CH.clips.idle),
+      walk: findClip(all, CH.clips.walk),
+      run:  findClip(all, CH.clips.run),
+      jump: findClip(all, CH.clips.jump)
+    };
+    window.__clips = Object.keys(all);
+    play('idle', 0);
+    window.AV_READY = true;
+    try { localStorage.setItem('deadlight.char', CH.id); } catch(e){}
+  }, undefined, function(e){ console.warn('character failed to load', e); });
+}
+
+function cycleChar(){
+  var idx = 0;
+  for (var i = 0; i < CHARS.length; i++) if (CHARS[i].id === (CH && CH.id)) idx = i;
+  var next = CHARS[(idx + 1) % CHARS.length];
+  loadChar(next.id);
+  if (typeof toast === 'function') toast('CHARACTER: ' + next.label);
+}
+
+var START_CHAR = 'soldier';
+try {
+  var qp = new URLSearchParams(location.search).get('char');
+  START_CHAR = qp || localStorage.getItem('deadlight.char') || 'soldier';
+} catch(e){}
+loadChar(START_CHAR);
 
 // ---------------------------------------------------------------- third person camera
 var CAM = { mode:'third', yaw:0, pitch:0.17, dist:3.05, cur:3.05, shoulder:0.45, target:new THREE.Vector3() };
@@ -342,15 +406,16 @@ function animateAvatar(dt, speed){
   AV.root.rotation.y = AV.yaw;
 
   if (MIXER){
-    var want = 'Idle';
-    if (!P.grounded && speed > 0.4) want = 'Run';
-    else if (speed > 3.3) want = 'Run';
-    else if (speed > 0.35) want = 'Walk';
-    if (window.__setAnim) window.__setAnim(want);
+    var want = 'idle';
+    if (!P.grounded && speed > 0.4 && ACT && ACT.jump) want = 'jump';
+    else if (!P.grounded && speed > 0.4) want = 'run';
+    else if (speed > 3.3) want = 'run';
+    else if (speed > 0.35) want = 'walk';
+    play(want);
     // keep the stride roughly in step with the ground speed
     if (CUR){
-      if (CURNAME === 'Run')  CUR.timeScale = Math.max(0.65, Math.min(1.7, speed / 4.4));
-      else if (CURNAME === 'Walk') CUR.timeScale = Math.max(0.6, Math.min(1.6, speed / 2.6));
+      if (CURNAME === 'run')  CUR.timeScale = Math.max(0.65, Math.min(1.7, speed / 4.4));
+      else if (CURNAME === 'walk') CUR.timeScale = Math.max(0.6, Math.min(1.6, speed / 2.6));
       else CUR.timeScale = 1;
     }
     MIXER.update(dt);
@@ -406,6 +471,7 @@ document.addEventListener('mousemove', function(e){
 });
 
 document.addEventListener('keydown', function(e){
+  if (e.code === 'KeyC' && G.mode !== 'title') cycleChar();
   if (e.code === 'KeyF'){
     window.POST_ON = !(window.POST_ON !== false);
     if (window.POST_ON){
@@ -705,7 +771,7 @@ function start(){
   G.mode = 'play';
   G.running = false; G.time = 0; G.cp = 0;
   reset(true);
-  AV.yaw = CAM.yaw + Math.PI;
+  AV.yaw = CAM.yaw;
   AV.root.position.set(P.pos.x, P.pos.y, P.pos.z);
   if (CAM.mode === 'third'){ AV.root.add(torch); AV.root.add(torch.target); }
   if (!IS_TOUCH){ var p = canvas.requestPointerLock(); if (p && p.catch) p.catch(function(){}); }
@@ -829,6 +895,12 @@ window.COURSE = {
   place: function(x, y, z){ P.pos.set(x, y, z); P.vel.set(0,0,0); },
   look: function(yaw, pitch){ CAM.yaw = yaw; if (pitch !== undefined) CAM.pitch = -pitch; },
   cam: function(mode){ CAM.mode = mode; },
+  dbg: function(){ return { scene: scene, av: AV, camera: camera, P: P, ch: CH, act: ACT, renderer: renderer, holder: HOLDER }; },
+  screen: function(y){
+    var v = new THREE.Vector3(AV.root.position.x, AV.root.position.y + (y||1.0), AV.root.position.z);
+    v.project(camera);
+    return { x: (v.x*0.5+0.5)*window.innerWidth, y: (-v.y*0.5+0.5)*window.innerHeight };
+  },
   jump: function(){ P.jumpBuffer = 0.16; },
   start: start
 };
