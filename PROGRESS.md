@@ -68,6 +68,20 @@ Without `cad`, the stride scaler falls back to the old soldier numbers (2.6 walk
 which is right for those three and wrong for a clip authored at a different speed. Waldo's
 walk clip is clamped at 1.6x, so his feet skate a little at full walk speed; his run matches.
 
+Waldo's idle was reposed once already: the fitted rig rests in a narrow A-pose with the arms
+25 degrees out, so the Idle clip builds a square stance instead. Measured in engine, stance
+0.387 m and hand spread 0.470 m, up from 0.190 / 0.810. Walk and run still use the narrow
+base. To change how he stands again, edit the IDLE block in
+`~/Downloads/waldo-character/tools/step_g_cycles.py` for a full rebuild, or run
+`tools/idle_repose.py`, which rebuilds only the Idle clip in `waldo_final.blend` and
+re-exports the GLB. `tools/probe_idle_axes.py` prints bone world positions per rotation
+axis, which is how the signs were settled instead of by guessing.
+
+Heads up on caching: the browser will happily render a stale `waldo_game.glb` after you
+replace the file. Bone positions in the console (`COURSE.dbg()`, walk the scene for
+`l_foot`/`l_hand`) tell you which build is actually loaded, and they only read true after
+the game has started and the mixer has run a frame.
+
 ## Rebuilding the art
 
 Bakes are **not** committed. They are reproducible, and the repo would be 200MB otherwise.
