@@ -38,12 +38,6 @@
     border:1px solid rgba(255,179,71,.35);color:#ffb347;font:inherit;font-size:10px;letter-spacing:2px;
     display:none;background:rgba(255,179,71,.06);}
   #jump.on{display:block;}
-  #char{position:fixed;right:34px;bottom:146px;width:88px;height:40px;border-radius:10px;
-        display:none;background:rgba(14,18,22,.78);color:#cfd6e2;border:1px solid #2c333d;
-        font:600 10px/40px ui-monospace,Menlo,monospace;letter-spacing:.12em;text-align:center;
-        text-transform:uppercase;touch-action:none;}
-  #char.on{display:block;}
-  @media (pointer:coarse){ #char{display:none;} #char.on{display:block;} }
 </style>
 </head>
 <body>
@@ -59,7 +53,6 @@
 
 <div id="stick"><div id="knob"></div></div>
 <button id="jump">JUMP</button>
-<button id="char">SOLDIER</button>
 
 <div id="screen">
   <h1>DEADLIGHT</h1>
@@ -269,12 +262,6 @@ var AV = { phase: 0, yaw: 0, legL:null, legR:null, armL:null, armR:null, torso:n
 var MIXER = null, CUR = null, CURNAME = '', HOLDER = null, ACT = null, CH = null;
 
 var CHARS = [
-  { id:'soldier',   label:'SOLDIER',   file:'models/Soldier.glb',         h:1.78, face:0,
-    clips:{ idle:['idle'], walk:['walk'], run:['run'], jump:[] } },
-  { id:'mannequin', label:'MANNEQUIN', file:'models/Xbot.glb',            h:1.80, face:0,
-    clips:{ idle:['idle'], walk:['walk'], run:['run'], jump:[] } },
-  { id:'drone',     label:'DRONE',     file:'models/RobotExpressive.glb', h:1.52, face:Math.PI,
-    clips:{ idle:['idle','standing'], walk:['walking','walk'], run:['running','run'], jump:['jump','walkjump'] } },
   { id:'waldo',     label:'WALDO',     file:'models/waldo_game.glb',      h:1.75, face:Math.PI,
     cad:{ walk:1.45, run:3.25 },
     clips:{ idle:['idle'], walk:['walk'], run:['run'], jump:[] } },
@@ -357,24 +344,10 @@ function loadChar(id){
     window.__clips = Object.keys(all);
     play('idle', 0);
     window.AV_READY = true;
-    try { localStorage.setItem('deadlight.char', CH.id); } catch(e){}
-    var cb = document.getElementById('char');
-    if (cb) cb.textContent = CH.label;
   }, undefined, function(e){ console.warn('character failed to load', e); });
 }
 
-function cycleChar(){
-  var idx = 0;
-  for (var i = 0; i < CHARS.length; i++) if (CHARS[i].id === (CH && CH.id)) idx = i;
-  var next = CHARS[(idx + 1) % CHARS.length];
-  loadChar(next.id);
-}
-
-var START_CHAR = 'soldier';
-try {
-  var qp = new URLSearchParams(location.search).get('char');
-  START_CHAR = qp || localStorage.getItem('deadlight.char') || 'soldier';
-} catch(e){}
+var START_CHAR = 'waldo';
 loadChar(START_CHAR);
 
 // ---------------------------------------------------------------- third person camera
@@ -484,7 +457,6 @@ document.addEventListener('mousemove', function(e){
 });
 
 document.addEventListener('keydown', function(e){
-  if (e.code === 'KeyC' && G.mode !== 'title') cycleChar();
   if (e.code === 'KeyF'){
     window.POST_ON = !(window.POST_ON !== false);
     if (window.POST_ON){
@@ -543,13 +515,6 @@ canvas.addEventListener('touchend', function(e){
     if (t.identifier === LOOK.id){ LOOK.active = false; LOOK.id = null; }
   }
 }, {passive:false});
-document.getElementById('char').addEventListener('touchstart', function(e){
-  cycleChar(); e.preventDefault(); e.stopPropagation();
-}, {passive:false});
-document.getElementById('char').addEventListener('click', function(e){
-  if (!IS_TOUCH) cycleChar();
-});
-
 document.getElementById('jump').addEventListener('touchstart', function(e){
   P.jumpBuffer = 0.16; e.preventDefault(); e.stopPropagation();
 }, {passive:false});
@@ -787,7 +752,7 @@ function reset(full){
 function start(){
   document.getElementById('screen').style.display = 'none';
   document.getElementById('hud').classList.add('on');
-  if (IS_TOUCH){ document.getElementById('jump').classList.add('on'); document.getElementById('char').classList.add('on'); }
+  if (IS_TOUCH){ document.getElementById('jump').classList.add('on'); }
   G.mode = 'play';
   G.running = false; G.time = 0; G.cp = 0;
   reset(true);
