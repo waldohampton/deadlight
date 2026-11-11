@@ -1,6 +1,7 @@
 # DEADLIGHT — progress and handoff
 
-Last session: 2026-11-11, commit `fa0fa13`. Branch `master`, working tree clean, pushed.
+Last code change: 2026-11-11, commit `fa0fa13` (left click jump). Branch `master`, working
+tree clean and pushed. This doc rides in the commit right after that one.
 
 ## This session, 2026-11-11
 
