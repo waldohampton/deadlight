@@ -83,7 +83,23 @@ axis, which is how the signs were settled instead of by guessing.
 Heads up on caching: the browser will happily render a stale `waldo_game.glb` after you
 replace the file. Bone positions in the console (`COURSE.dbg()`, walk the scene for
 `l_foot`/`l_hand`) tell you which build is actually loaded, and they only read true after
-the game has started and the mixer has run a frame.
+the game has started and the mixer has run a frame. The GLB has landed at the same byte size
+across rebuilds, so compare the first keyframe quaternion of a `l_forearm` track in the
+`Walk` animation instead of trusting file size.
+
+## Gait
+
+The walk and run arm swing was authored backwards in the first pass: arms swung with the
+legs on the same side (foot-versus-hand correlation +0.84 walk, +0.92 run) and the elbows
+hyperextended, hands behind the elbows the whole cycle. Flipping the sign of the upper-arm
+swing and the forearm terms fixed it, giving -0.86 and -0.95, with the run's hands 0.13 to
+0.23 m in front of the elbows.
+
+Do not fix a clip that looks backwards by rotating the mesh or the rig. The legs are the
+reference: in a correct clip the stance foot slides from in front of the hips to behind
+them and the swing brings it forward again. Measure that with
+`~/Downloads/waldo-character/tools/probe_gait.py` before changing any orientation, because
+flipping the model also flips the legs.
 
 ## Rebuilding the art
 
