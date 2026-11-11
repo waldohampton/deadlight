@@ -70,8 +70,10 @@ walk clip is clamped at 1.6x, so his feet skate a little at full walk speed; his
 
 Waldo's idle was reposed once already: the fitted rig rests in a narrow A-pose with the arms
 25 degrees out, so the Idle clip builds a square stance instead. Measured in engine, stance
-0.387 m and hand spread 0.470 m, up from 0.190 / 0.810. Walk and run still use the narrow
-base. To change how he stands again, edit the IDLE block in
+0.387 m and hand spread 0.470 m, up from 0.190 / 0.810. The pelvis is also tucked 3.5 degrees
+with the spine column straightened, which cut the lumbar arch from 8.3 mm of anterior bow to
+1.5 mm. Walk and run still use the narrow base. To change how he stands again, edit the
+IDLE block in
 `~/Downloads/waldo-character/tools/step_g_cycles.py` for a full rebuild, or run
 `tools/idle_repose.py`, which rebuilds only the Idle clip in `waldo_final.blend` and
 re-exports the GLB. `tools/probe_idle_axes.py` prints bone world positions per rotation
