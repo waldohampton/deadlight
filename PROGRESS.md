@@ -1,6 +1,6 @@
 # DEADLIGHT — progress and handoff
 
-Last session: 2026-11-10. Branch `master`, commit `75d4d8c`, working tree clean.
+Last session: 2026-11-11. Branch `master`, working tree clean.
 
 ## What this is
 
@@ -45,6 +45,28 @@ Pages is served from `master` root and takes 40-60 seconds to pick up a push. Po
 WASD or arrows move, camera-relative. Space jumps. Shift runs. R restarts. V toggles
 first/third person. F toggles the film pass. On touch: left stick, JUMP button, drag the
 right side to look.
+
+## Characters
+
+`CHARS` in `course.html` is the registry; `C` cycles on desktop, the CHAR button cycles on
+touch. Each entry carries a height (`h`), a facing flip (`face`), optional stride cadence
+(`cad`, the m/s the clip was authored at) and a clip-name map. Clip lookup is
+case-insensitive, so `Idle`/`Walk`/`Run` bind as-is.
+
+| id | file | notes |
+| --- | --- | --- |
+| `soldier` | `models/Soldier.glb` | default, CC0 from three.js examples |
+| `mannequin` | `models/Xbot.glb` | |
+| `drone` | `models/RobotExpressive.glb` | `face:Math.PI`, has real jump clips |
+| `waldo` | `models/waldo_game.glb` | own rigged character, `cad:{walk:1.45,run:3.25}` |
+
+`waldo_game.glb` is the game-ready build of the scanned statue: 4,180 tris, 23 joints,
+Idle 4.0s / Walk 1.0s / Run 0.733s, 1.75 m, feet at y=0, authored facing +Z, so it needs
+`face:Math.PI` here. Source and pipeline live in `~/Downloads/waldo-character/`.
+
+Without `cad`, the stride scaler falls back to the old soldier numbers (2.6 walk / 4.4 run),
+which is right for those three and wrong for a clip authored at a different speed. Waldo's
+walk clip is clamped at 1.6x, so his feet skate a little at full walk speed; his run matches.
 
 ## Rebuilding the art
 
