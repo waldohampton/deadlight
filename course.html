@@ -60,7 +60,7 @@
   <p>
     Get from the platform to the green lamp at the tank.<br>
     Do not touch the ground after the first jump.<br><br>
-    <b>WASD / arrows</b> move · <b>SPACE</b> jump · <b>SHIFT</b> run<br>
+    <b>WASD / arrows</b> move · <b>SPACE</b> or <b>left click</b> jump · <b>SHIFT</b> run<br>
     <span style="color:#6c7268">R restarts · falling drops you at the last checkpoint</span>
   </p>
   <button id="go">START RUN</button>
@@ -447,6 +447,11 @@ canvas.addEventListener('click', function(){
   if (G.mode !== 'title' && !IS_TOUCH && document.pointerLockElement !== canvas){
     var p = canvas.requestPointerLock(); if (p && p.catch) p.catch(function(){});
   }
+});
+canvas.addEventListener('mousedown', function(e){
+  if (e.button !== 0 || G.mode !== 'play' || IS_TOUCH) return;
+  e.preventDefault();
+  P.jumpBuffer = 0.16;
 });
 document.addEventListener('mousemove', function(e){
   if (G.mode === 'title' || LOOK.active) return;

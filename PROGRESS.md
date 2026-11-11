@@ -42,9 +42,9 @@ Pages is served from `master` root and takes 40-60 seconds to pick up a push. Po
 
 ## Controls
 
-WASD or arrows move, camera-relative. Space jumps. Shift runs. R restarts. V toggles
-first/third person. F toggles the film pass. On touch: left stick, JUMP button, drag the
-right side to look.
+WASD or arrows move, camera-relative. Space or left mouse click jumps. Shift runs. R restarts.
+V toggles first/third person. F toggles the film pass. On touch: left stick, JUMP button,
+drag the right side to look.
 
 ## Player character
 
