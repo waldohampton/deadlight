@@ -63,7 +63,8 @@
     Run the yard from the apron to the lamp on the tank.<br>
     The floor is ground, not a fail state: keeping your speed is the whole game.<br><br>
     <b>WASD / arrows</b> move · <b>SPACE</b> or <b>left click</b> jump · <b>SHIFT</b> run<br>
-    <span style="color:#6c7268">Run into anything waist high and you vault it. R takes you back to the last marker, SHIFT+R starts over.</span>
+    <span style="color:#6c7268">Run into anything waist high and you vault it. R takes you back to the last marker, SHIFT+R starts over.<br>
+    The car is parked to the right of the apron. <b>E</b> gets in, <b>E</b> gets out.</span>
   </p>
   <button id="go">START RUN</button>
 </div>
@@ -269,6 +270,264 @@ var CHECKPOINTS = [
 
 // the tank only blocks at ground level; above its flange the scaffold rules
 var TANK = {x:-10.5, z:-12.0, r:3.2};
+
+// ---------------------------------------------------------------- the car
+// A 1979 Calder Arrow 305, the dish on the roof. Arcade physics: a bicycle
+// model for the heading, two collision circles, four ground samples so it
+// sits on a ramp instead of floating over it.
+var CAR = {
+  pos: new THREE.Vector3(5.6, 0, 12.6),
+  yaw: 0, vel: new THREE.Vector3(), vy: 0,
+  steer: 0, spin: 0, grounded: true,
+  pitch: 0, roll: 0, root: null, wheels: [], headlights: null
+};
+var CARTUNE = {
+  accel: 10.5, brake: 20, reverseMax: 6.5, top: 17.5,
+  drag: 0.50, rollRes: 2.0,
+  grip: 7.5, gripHand: 1.5,
+  steerMax: 0.60, steerRate: 3.6, steerBack: 6.0,
+  wheelbase: 2.55, track: 1.56,
+  radius: 0.95, halfLen: 1.15, height: 1.12
+};
+var MODE = 'foot';
+
+(function(){
+  var bodyMat = new THREE.MeshStandardMaterial({color:0x1f2228, roughness:0.58, metalness:0.35});
+  var trimMat = new THREE.MeshStandardMaterial({color:0x2a2e34, roughness:0.48, metalness:0.60});
+  var glassMat= new THREE.MeshStandardMaterial({color:0x0a0f12, roughness:0.22, metalness:0.80});
+  var lampMat = new THREE.MeshBasicMaterial({color:0xffd9a0});
+  var tailMat = new THREE.MeshBasicMaterial({color:0xff3a1a});
+  var rimMat  = new THREE.MeshStandardMaterial({color:0x33373d, roughness:0.45, metalness:0.80});
+  var sillMat = new THREE.MeshStandardMaterial({color:0x8a6a1e, roughness:0.45, metalness:0.2,
+                                                emissive:0x6a4a08, emissiveIntensity:1.6});
+
+  var g = new THREE.Group();
+  g.rotation.order = 'YXZ';
+
+  function part(geo, mat, x, y, z){
+    var m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    g.add(m);
+    return m;
+  }
+  var B = function(w,h,d){ return new THREE.BoxGeometry(w,h,d); };
+
+  // body: long rear deck, low nose, so the profile reads as a wedge
+  part(B(1.86, 0.46, 3.30), bodyMat, 0, 0.60,  0.45);   // main body
+  part(B(1.80, 0.30, 1.35), bodyMat, 0, 0.52, -1.60);   // nose
+  part(B(1.70, 0.16, 0.90), bodyMat, 0, 0.77, -1.95);   // hood lip
+  part(B(1.62, 0.42, 1.55), trimMat, 0, 1.02,  0.10);   // cabin
+  part(B(1.50, 0.50, 0.07), glassMat, 0, 0.98, -0.70).rotation.x = -0.52;  // windshield
+  part(B(1.46, 0.42, 0.07), glassMat, 0, 1.00,  0.92).rotation.x =  0.46;  // rear glass
+  part(B(1.86, 0.22, 0.24), bodyMat, 0, 0.70,  2.14);   // tail panel
+  part(B(0.90, 0.05, 3.90), trimMat, 0, 0.86,  0);      // roof line shadow
+
+  // sills and side lamps in the same amber as the course, so it reads at night
+  part(B(0.07, 0.07, 2.70), sillMat, -0.94, 0.44, 0.20);
+  part(B(0.07, 0.07, 2.70), sillMat,  0.94, 0.44, 0.20);
+
+  // lights
+  part(B(0.44, 0.13, 0.06), lampMat, -0.60, 0.62, -2.26);
+  part(B(0.44, 0.13, 0.06), lampMat,  0.60, 0.62, -2.26);
+  part(B(0.52, 0.10, 0.06), tailMat, -0.58, 0.72,  2.27);
+  part(B(0.52, 0.10, 0.06), tailMat,  0.58, 0.72,  2.27);
+
+  var beam = new THREE.SpotLight(0xffe9c4, 7.0, 60, 0.72, 0.60, 0.85);
+  beam.position.set(0, 0.70, -1.90);
+  beam.target.position.set(0, 0.10, -20);
+  beam.castShadow = false;
+  g.add(beam); g.add(beam.target);
+  CAR.headlights = beam;
+
+  var tailGlow = new THREE.PointLight(0xff2a10, 0.55, 6, 2);
+  tailGlow.position.set(0, 0.70, 2.30);
+  g.add(tailGlow);
+
+  // wheels
+  for (var sx = -1; sx <= 1; sx += 2){
+    for (var sz = -1; sz <= 1; sz += 2){
+      var w = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.26, 14), rimMat);
+      w.rotation.z = Math.PI/2;
+      w.position.set(sx * 0.90, 0.36, sz * 1.42);
+      w.castShadow = true;
+      g.add(w);
+      CAR.wheels.push(w);
+    }
+  }
+
+  // the dish, gimballed through the roof
+  part(new THREE.CylinderGeometry(0.05, 0.05, 0.62, 8), trimMat, 0, 1.47, 1.05);
+  var dish = part(new THREE.CylinderGeometry(0.62, 0.16, 0.24, 18), trimMat, 0, 1.80, 1.05);
+  dish.rotation.x = -0.85;
+  part(new THREE.SphereGeometry(0.07, 8, 6), EDGE_MAT, 0, 1.94, 0.72);
+
+  g.position.copy(CAR.pos);
+  scene.add(g);
+  CAR.root = g;
+})();
+
+// four wheel samples: height, plus the pitch and roll that keeps the car on a slope
+// chassis height first, then wheel samples taken from that height. Sampling the
+// wheels against the car's own y is what made a steep ramp disappear: the body
+// lagged, the reach fell short, the surface vanished, and the car sank.
+function carGround(){
+  var fx = -Math.sin(CAR.yaw), fz = -Math.cos(CAR.yaw);
+  var rx =  Math.cos(CAR.yaw), rz = -Math.sin(CAR.yaw);
+  var hf = CARTUNE.wheelbase/2, ht = CARTUNE.track/2;
+
+  var under = surfaceAt(CAR.pos.x, CAR.pos.z, CAR.pos.y + 0.55, 0.0);
+  var y = under === null ? 0 : under;
+
+  function h(dx, dz){
+    var s = surfaceAt(CAR.pos.x + dx, CAR.pos.z + dz, y + 0.95, 0.0);
+    return s === null ? y : s;
+  }
+  var fl = h(fx*hf - rx*ht, fz*hf - rz*ht);
+  var fr = h(fx*hf + rx*ht, fz*hf + rz*ht);
+  var rl = h(-fx*hf - rx*ht, -fz*hf - rz*ht);
+  var rr = h(-fx*hf + rx*ht, -fz*hf + rz*ht);
+  var front = (fl + fr) / 2, rear = (rl + rr) / 2;
+  var left = (fl + rl) / 2, right = (fr + rr) / 2;
+  return {
+    y: y,
+    pitch: Math.atan2(front - rear, CARTUNE.wheelbase),
+    roll: Math.atan2(right - left, CARTUNE.track)
+  };
+}
+
+function stepCar(dt){
+  CAR.lastHit = '';
+  var throttle = (keys['KeyW'] || keys['ArrowUp']) ? 1 : 0;
+  var braking  = (keys['KeyS'] || keys['ArrowDown']) ? 1 : 0;
+  var steerIn  = ((keys['KeyA'] || keys['ArrowLeft']) ? 1 : 0) - ((keys['KeyD'] || keys['ArrowRight']) ? 1 : 0);
+  var hand     = !!keys['Space'];
+
+  if (!CAR.grounded) throttle = Math.min(throttle, 0.25);
+
+  // steering: smoothed toward the input, self-centres when you let go
+  var want = steerIn * CARTUNE.steerMax;
+  var rate = steerIn ? CARTUNE.steerRate : CARTUNE.steerBack;
+  var ds = want - CAR.steer;
+  CAR.steer += Math.max(-rate*dt, Math.min(rate*dt, ds));
+
+  var fx = -Math.sin(CAR.yaw), fz = -Math.cos(CAR.yaw);
+  var rx =  Math.cos(CAR.yaw), rz = -Math.sin(CAR.yaw);
+  var vF = CAR.vel.x*fx + CAR.vel.z*fz;
+  var vR = CAR.vel.x*rx + CAR.vel.z*rz;
+
+  if (throttle) vF += CARTUNE.accel * dt;
+  if (braking){
+    if (vF > 0.3) vF -= CARTUNE.brake * dt;
+    else vF = Math.max(-CARTUNE.reverseMax, vF - CARTUNE.reverseMax * 0.55 * dt);
+  }
+  if (!throttle && !braking){
+    var rr2 = CARTUNE.rollRes * dt;
+    if (Math.abs(vF) < rr2) vF = 0; else vF -= Math.sign(vF) * rr2;
+  }
+  // drag, then the top end
+  vF -= vF * CARTUNE.drag * (Math.abs(vF) / CARTUNE.top) * dt;
+  vF = Math.max(-CARTUNE.reverseMax, Math.min(CARTUNE.top, vF));
+
+  // the heading turns because the front wheels point somewhere else
+  if (Math.abs(vF) > 0.12 && CAR.grounded){
+    CAR.yaw += (vF / CARTUNE.wheelbase) * Math.tan(CAR.steer) * dt;
+  }
+
+  // lateral grip, and the handbrake is what takes it away
+  vR -= vR * Math.min(1, (hand ? CARTUNE.gripHand : CARTUNE.grip) * dt);
+
+  fx = -Math.sin(CAR.yaw); fz = -Math.cos(CAR.yaw);
+  rx =  Math.cos(CAR.yaw); rz = -Math.sin(CAR.yaw);
+  CAR.vel.x = fx*vF + rx*vR;
+  CAR.vel.z = fz*vF + rz*vR;
+
+  // move one axis at a time and refuse the move if it would put the hull inside
+  // something. Never resolving penetration is what keeps thin walls stable.
+  var ox = CAR.pos.x;
+  CAR.pos.x += CAR.vel.x * dt;
+  var hx = carHitAt(CAR.pos.x, CAR.pos.z);
+  if (hx){ CAR.pos.x = ox; CAR.vel.x *= -0.15; CAR.lastHit = (hx.name || 'box') + '@' + hx.y1.toFixed(2); }
+  var oz = CAR.pos.z;
+  CAR.pos.z += CAR.vel.z * dt;
+  var hz = carHitAt(CAR.pos.x, CAR.pos.z);
+  if (hz){ CAR.pos.z = oz; CAR.vel.z *= -0.15; CAR.lastHit = (hz.name || 'box') + '@' + hz.y1.toFixed(2); }
+
+  // ground: the surface under the wheels either carries the car or it falls.
+  // No lag on the way up, or the ground sampler loses a slope the car is on.
+  var gr = carGround();
+  var dy = gr.y - CAR.pos.y;
+  if (dy > -0.45 && dy < 0.45){
+    CAR.pos.y = gr.y; CAR.vy = 0; CAR.grounded = true;
+  } else if (dy >= 0.45){
+    CAR.pos.y += Math.min(dy, 0.5); CAR.vy = 0; CAR.grounded = true;
+  } else {
+    CAR.vy -= TUNE.gravity * dt;
+    CAR.pos.y += CAR.vy * dt;
+    if (CAR.pos.y < gr.y){ CAR.pos.y = gr.y; CAR.vy = 0; }
+    CAR.grounded = (CAR.pos.y - gr.y) < 0.18;
+  }
+  CAR.pitch += (gr.pitch - CAR.pitch) * Math.min(1, dt * 8);
+  CAR.roll  += (gr.roll  - CAR.roll ) * Math.min(1, dt * 8);
+  CAR.spin  += Math.hypot(CAR.vel.x, CAR.vel.z) * dt / 0.36;
+}
+
+// does the car's two-circle hull overlap anything solid at this x/z?
+function carHitAt(x, z){
+  var fx = -Math.sin(CAR.yaw), fz = -Math.cos(CAR.yaw);
+  var lo = CAR.pos.y + 0.34, hi = CAR.pos.y + CARTUNE.height;
+  for (var s = -1; s <= 1; s += 2){
+    var cx = x + fx * CARTUNE.halfLen * s;
+    var cz = z + fz * CARTUNE.halfLen * s;
+    // the lip test is relative to the surface under THAT end of the car, not
+    // the centre, or a nose up a slope reads as hitting a wall
+    var here = surfaceAt(cx, cz, CAR.pos.y + 1.40, 0.0);
+    var base = here === null ? CAR.pos.y : here;
+    for (var i=0;i<boxes.length;i++){
+      var b = boxes[i];
+      if (hi <= b.y0 + 0.02 || lo >= b.y1 - 0.02) continue;
+      if (b.y1 <= base + 0.02) continue;                 // below the wheels, drive over it
+      if (b.y1 > base && b.y1 - base <= 0.85) continue;  // a kerb the wheels ride up
+      if (overlapXZ(b, cx, cz, CARTUNE.radius)) return b;
+    }
+    var tdx = cx - TANK.x, tdz = cz - TANK.z;
+    if (CAR.pos.y < 6.0 && Math.hypot(tdx, tdz) < TANK.r + CARTUNE.radius) return {name:'tank', y1:6.8};
+  }
+  return null;
+}
+
+
+function animateCar(){
+  var g = CAR.root;
+  g.position.copy(CAR.pos);
+  g.rotation.y = CAR.yaw;
+  g.rotation.x = CAR.pitch;
+  g.rotation.z = CAR.roll;
+  for (var i=0;i<CAR.wheels.length;i++) CAR.wheels[i].rotation.x = CAR.spin;
+}
+
+function nearCar(){
+  return Math.hypot(P.pos.x - CAR.pos.x, P.pos.z - CAR.pos.z) < 3.6 && Math.abs(P.pos.y - CAR.pos.y) < 2.2;
+}
+
+function enterCar(){
+  MODE = 'car';
+  AV.root.visible = false;
+  torch.visible = false;
+  CARCAM.yaw = CAR.yaw; CARCAM.idle = 9;
+  G.msg = 'CALDER ARROW · W/S THROTTLE · A/D STEER · SPACE HANDBRAKE · E GET OUT';
+  G.msgT = 4.0;
+}
+
+function exitCar(){
+  MODE = 'foot';
+  var rx = Math.cos(CAR.yaw), rz = -Math.sin(CAR.yaw);
+  P.pos.set(CAR.pos.x + rx * 1.9, CAR.pos.y + 0.05, CAR.pos.z + rz * 1.9);
+  P.vel.set(0, 0, 0); P.vault = null; P.grounded = false;
+  AV.root.visible = true;
+  torch.visible = true;
+  AV.root.position.set(P.pos.x, P.pos.y, P.pos.z);
+}
 
 // ---------------------------------------------------------------- baked yard
 var meshes = [];
@@ -498,6 +757,43 @@ function placeCamera(dt){
   }
 }
 
+// chase camera for the car: sits behind the heading, pays out and opens the
+// lens with speed, and lets the mouse look around before it swings back
+var CARCAM = { yaw:0, dist:6.2, cur:6.2, pitch:0.22, idle:9 };
+
+function placeCarCamera(dt){
+  var spd = Math.hypot(CAR.vel.x, CAR.vel.z);
+  CARCAM.idle += dt;
+  if (CARCAM.idle > 0.7){
+    var ty = CAR.yaw;
+    var dd = ((ty - CARCAM.yaw + Math.PI*3) % (Math.PI*2)) - Math.PI;
+    CARCAM.yaw += dd * Math.min(1, dt * (2.2 + spd * 0.14));
+  }
+
+  var wantDist = CARCAM.dist + Math.min(1.4, spd * 0.07);
+  var wantFov  = 58 + Math.min(13, spd * 0.75);
+
+  var cp = Math.cos(CARCAM.pitch), sp = Math.sin(CARCAM.pitch);
+  var dir = new THREE.Vector3(Math.sin(CARCAM.yaw) * cp, sp, Math.cos(CARCAM.yaw) * cp);
+  var target = new THREE.Vector3(CAR.pos.x, CAR.pos.y + 1.15, CAR.pos.z);
+  var want = target.clone().addScaledVector(dir, wantDist);
+  var toCam = want.clone().sub(target);
+  var len = toCam.length();
+  camRay.set(target, toCam.normalize());
+  camRay.far = len;
+  var hits = camRay.intersectObjects(camSolids.concat(meshes), true);
+  if (hits.length && hits[0].distance < len) len = Math.max(1.4, hits[0].distance - 0.25);
+  CARCAM.cur += (len - CARCAM.cur) * Math.min(1, dt * (len < CARCAM.cur ? 16 : 5));
+
+  camera.position.copy(target).addScaledVector(dir, CARCAM.cur);
+  var fwdX = -Math.sin(CARCAM.yaw), fwdZ = -Math.cos(CARCAM.yaw);
+  camera.lookAt(target.x + fwdX * 3.2, target.y + 0.35, target.z + fwdZ * 3.2);
+  if (Math.abs(camera.fov - wantFov) > 0.02){
+    camera.fov += (wantFov - camera.fov) * Math.min(1, dt * 3.0);
+    camera.updateProjectionMatrix();
+  }
+}
+
 function animateAvatar(dt, speed){
   AV.root.position.set(P.pos.x, P.pos.y, P.pos.z);
   AV.root.rotation.y = AV.yaw;
@@ -569,7 +865,14 @@ try { G.best = parseFloat(localStorage.getItem('dl_course_best')) || null; } cat
 
 document.addEventListener('keydown', function(e){
   if (e.code === 'Space'){ P.jumpBuffer = TUNE.buffer; e.preventDefault(); }
-  if (e.code === 'KeyR' && G.mode !== 'title'){ if (e.shiftKey) reset(true); else reset(false); }
+  if (e.code === 'KeyR' && G.mode !== 'title'){
+    if (MODE === 'car') exitCar();
+    if (e.shiftKey) reset(true); else reset(false);
+  }
+  if (e.code === 'KeyE' && G.mode === 'play'){
+    if (MODE === 'car') exitCar();
+    else if (nearCar()) enterCar();
+  }
   keys[e.code] = true;
   if (G.mode === 'title' && (e.code === 'Enter' || e.code === 'Space')) start();
 });
@@ -588,6 +891,12 @@ canvas.addEventListener('mousedown', function(e){
 document.addEventListener('mousemove', function(e){
   if (G.mode === 'title' || LOOK.active) return;
   if (document.pointerLockElement !== canvas) return;
+  if (MODE === 'car'){
+    CARCAM.yaw  -= e.movementX * 0.0026;
+    CARCAM.pitch = Math.max(-0.08, Math.min(0.62, CARCAM.pitch + e.movementY * 0.0016));
+    CARCAM.idle = 0;
+    return;
+  }
   CAM.yaw   -= e.movementX * 0.0024;
   CAM.pitch += e.movementY * 0.0018;
   CAM.pitch = Math.max(-0.55, Math.min(0.95, CAM.pitch));
@@ -964,7 +1273,13 @@ function reset(full){
   AV.yaw = c.yaw;
   AV.root.position.set(P.pos.x, P.pos.y, P.pos.z);
   if (full){ G.cp = 0; G.time = 0;
-    document.querySelector('#cp b').textContent = 'START'; }
+    document.querySelector('#cp b').textContent = 'START';
+    // the car goes back to its parking spot and you are on foot again
+    CAR.pos.set(5.6, 0, 12.6); CAR.yaw = 0; CAR.vel.set(0, 0, 0); CAR.vy = 0;
+    CAR.steer = 0; CAR.pitch = 0; CAR.roll = 0;
+    MODE = 'foot'; AV.root.visible = true; torch.visible = true;
+    animateCar();
+  }
 }
 
 function start(){
@@ -1011,7 +1326,25 @@ function frame(){
   requestAnimationFrame(frame);
 }
 
+function updateCar(dt){
+  if (!G.running && (keys['KeyW'] || keys['ArrowUp'])){
+    G.running = true;
+  }
+  if (G.running) G.time += dt;
+  stepCar(dt);
+  animateCar();
+  placeCarCamera(dt);
+
+  document.querySelector('#clock').innerHTML = G.time.toFixed(2) + '<small>RUN</small>';
+  document.getElementById('best').innerHTML = G.best === null ? 'NO TIME SET' : 'BEST ' + G.best.toFixed(2);
+  var kmh = Math.hypot(CAR.vel.x, CAR.vel.z) * 3.6;
+  document.getElementById('spd').textContent = kmh.toFixed(0) + ' KM/H · CAR' + (CAR.grounded ? '' : ' · AIR');
+  if (G.msgT > 0){ G.msgT -= dt; document.getElementById('msg').textContent = G.msg; }
+  else document.getElementById('msg').textContent = '';
+}
+
 function update(dt){
+  if (MODE === 'car'){ updateCar(dt); return; }
   var fwd = 0, side = 0;
   if (keys['KeyW'] || keys['ArrowUp']) fwd += 1;
   if (keys['KeyS'] || keys['ArrowDown']) fwd -= 1;
@@ -1106,6 +1439,18 @@ window.addEventListener('resize', function(){
 
 window.COURSE = {
   TUNE: TUNE,
+  CARTUNE: CARTUNE,
+  car: function(){
+    return { mode: MODE, yaw:+CAR.yaw.toFixed(2), grounded: CAR.grounded,
+             kmh:+ (Math.hypot(CAR.vel.x, CAR.vel.z)*3.6).toFixed(1),
+             pos:[+CAR.pos.x.toFixed(2), +CAR.pos.y.toFixed(2), +CAR.pos.z.toFixed(2)],
+             pitch:+CAR.pitch.toFixed(3), roll:+CAR.roll.toFixed(3),
+             hit: CAR.lastHit || '' };
+  },
+  enterCar: function(){ enterCar(); },
+  exitCar: function(){ exitCar(); },
+  carTo: function(x, z, yaw){ CAR.pos.set(x, 0.02, z); CAR.yaw = yaw || 0;
+    CAR.vel.set(0,0,0); CAR.vy = 0; CAR.pitch = 0; CAR.roll = 0; animateCar(); },
   state: function(){
     var spd = Math.hypot(P.vel.x, P.vel.z);
     return { mode:G.mode, time:+G.time.toFixed(2), cp:G.cp, grounded:P.grounded,

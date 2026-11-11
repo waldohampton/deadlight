@@ -2,6 +2,42 @@
 
 Last code change: `course.html`, traversal rebuild. Branch `master`, pushed.
 
+## This session, 2026-11-11 (third session): the car
+
+A drivable car and a chase camera, in the same yard. It is a sandbox: the run
+is still on foot, the car does not trigger markers or the finish.
+
+1. `CAR` is a 1979 Calder Arrow 305 built out of boxes: wedge nose, cabin, four
+   wheels, a dish gimballed through the roof. Headlight spot, tail glow, amber
+   side sills in the same family as the course edges.
+2. Physics is a bicycle model: `vF`/`vR` decompose the velocity, engine and
+   brake act along forward, lateral grip bleeds `vR` (1.5 when the handbrake is
+   down, so it drifts), and the heading turns at `vF / wheelbase * tan(steer)`.
+3. Collision is swept and axis-separated: move x, ask `carHitAt`, revert if it
+   would penetrate, then the same for z. Resolving penetration instead made a
+   thin wall (the rail) flip sides every frame and the car teleported back and
+   forth.
+4. Ground is a chassis query plus four wheel samples. The chassis height comes
+   from one query under the middle; the wheels are sampled from *that* height
+   for pitch and roll. Sampling the wheels against the car's own y is what made
+   a 32 degree ramp vanish: the body lagged, the reach fell short, and the car
+   sank into the slope.
+5. Two lip rules, both needed: a box below the wheels is ignored (`b.y1 <=
+   base`), and a box up to 0.85 above is a kerb the wheels ride up (the curb,
+   the deck's edge). Anything taller blocks, which keeps the rail, the pipes
+   and the tank solid.
+6. `E` near the car gets in, `E` gets out. In the car the avatar and the torch
+   are hidden, the HUD switches to KM/H, and SHIFT+R or R puts you back on foot.
+7. Chase camera: behind the heading, swings itself back after 0.7 s without a
+   mouse move, arm pays out and the lens opens with speed, and it raycasts so
+   the yard does not get between you and the car.
+
+Verified with the sim driver: the ramp run reaches the deck at 4.26 on all five
+starting points and carries on at 58 km/h; the rail stops the car at z 0.20;
+the pipes stop it at z -4.56; a lateral run reaches 60.7 km/h and a 30 frame
+turn swings the heading 1.95 rad without losing speed. Pose on the slope was
+checked in a screenshot: nose up, wheels on the ramp, no clipping.
+
 ## This session, 2026-11-11 (second session): the yard became a place
 
 The course was eight floating pads over a yard you could not touch, the floor
@@ -87,6 +123,11 @@ broken build.
 WASD or arrows move, camera-relative. Space or left mouse click jumps. Shift
 runs. R back to the last marker, Shift+R restarts. V first/third person. F film
 pass. On touch: left stick, JUMP button, drag the right side to look.
+
+The car: `E` near it to get in, `E` again to get out. W/S throttle and brake,
+A/D steer, Space handbrake (it drifts), mouse to look around while it swings
+back. Top end is 63 km/h, and it will take the gantry ramp and launch off the
+deck.
 
 ## The line, in numbers
 
@@ -239,16 +280,24 @@ and the dt clamp changes the timing, so feel is Waldo's call on his own machine.
    in practice, bake it into `bake_night.py` instead of adding lamps.
 5. **Camera clipping.** Pull-in is implemented and seen working, it has not been
    walked into every corner of the yard.
-6. **No Android wrapper yet.** Capacitor is the plan, nothing scaffolded.
-7. **Waldo's limits.** Procedural weights on 178 welded patches, no finger or
-   facial bones, one baked 2K texture. Deformation holds at the shoulders, hips,
-   elbows and knees at 8 phases per clip. A proper retopo is what close-up hero
-   work would need.
-8. **Walk feet skate a little.** The walk clip was authored at 1.45 m/s and the
-   game walks at 3.0, so the stride scaler clamps at 1.6x. The run matches.
-9. **`index.html` is still the old maze game** at the Pages root, so the site
-   root and `course.html` disagree about what this project is. Point the root
-   at the course when the old build is retired.
+6. **The car does not count for the run.** Markers and the finish are foot only.
+   If driving should be a legal line, the finish test has to learn about `MODE`.
+7. **Exiting beside a pipe can drop you inside it.** The car parks where it
+   stops and the player is placed 1.9 m to its right, which can be inside a
+   solid. Nudge on exit rather than teleport blind.
+8. **Headlights run out before the car does.** At 60 km/h the beam reaches about
+   15 m of readable ground, so the far yard is dark at speed. Either lean on it
+   as night driving or raise the beam further.
+9. **No Android wrapper yet.** Capacitor is the plan, nothing scaffolded.
+10. **Waldo's limits.** Procedural weights on 178 welded patches, no finger or
+    facial bones, one baked 2K texture. Deformation holds at the shoulders, hips,
+    elbows and knees at 8 phases per clip. A proper retopo is what close-up hero
+    work would need.
+11. **Walk feet skate a little.** The walk clip was authored at 1.45 m/s and the
+    game walks at 3.0, so the stride scaler clamps at 1.6x. The run matches.
+12. **`index.html` is still the old maze game** at the Pages root, so the site
+    root and `course.html` disagree about what this project is. Point the root
+    at the course when the old build is retired.
 
 ## Gotchas that cost time
 
