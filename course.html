@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
-<title>DEADLIGHT — night yard course</title>
+<title>DEADLIGHT - the yard</title>
 <style>
   html,body{margin:0;height:100%;background:#04060a;overflow:hidden;touch-action:none;
     font-family:"Cascadia Mono",Consolas,monospace;color:#d8d5c8;-webkit-user-select:none;user-select:none;}
@@ -18,6 +18,7 @@
   #best{position:absolute;right:22px;top:20px;font-size:9px;letter-spacing:2px;color:#7d8478;text-align:right;line-height:1.9;}
   #cp{position:absolute;left:22px;top:20px;font-size:9px;letter-spacing:2px;color:#7d8478;line-height:1.9;}
   #cp b{color:#9dffbe;font-weight:normal;}
+  #spd{position:absolute;left:22px;top:44px;font-size:9px;letter-spacing:2px;color:#5f665d;}
   #msg{position:absolute;left:0;right:0;bottom:88px;text-align:center;font-size:12px;letter-spacing:4px;
     color:rgba(255,179,71,.9);text-shadow:0 0 18px rgba(255,120,40,.45);}
   #screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
@@ -46,7 +47,8 @@
 
 <div id="hud">
   <div id="clock">0.00<small>RUN</small></div>
-  <div id="cp">CHECKPOINT <b>START</b></div>
+  <div id="cp">MARKER <b>START</b></div>
+  <div id="spd">0.0 M/S</div>
   <div id="best"></div>
   <div id="msg"></div>
 </div>
@@ -56,12 +58,12 @@
 
 <div id="screen">
   <h1>DEADLIGHT</h1>
-  <h2>NIGHT YARD — THE RUN</h2>
+  <h2>THE YARD — A TRAVERSAL</h2>
   <p>
-    Get from the platform to the green lamp at the tank.<br>
-    Do not touch the ground after the first jump.<br><br>
+    Run the yard from the apron to the lamp on the tank.<br>
+    The floor is ground, not a fail state: keeping your speed is the whole game.<br><br>
     <b>WASD / arrows</b> move · <b>SPACE</b> or <b>left click</b> jump · <b>SHIFT</b> run<br>
-    <span style="color:#6c7268">R restarts · falling drops you at the last checkpoint</span>
+    <span style="color:#6c7268">Run into anything waist high and you vault it. R takes you back to the last marker, SHIFT+R starts over.</span>
   </p>
   <button id="go">START RUN</button>
 </div>
@@ -109,21 +111,82 @@ var STEP_MAT  = new THREE.MeshStandardMaterial({color:0x1a1d21, roughness:0.62, 
 var EDGE_MAT  = new THREE.MeshStandardMaterial({color:0x8a6a1e, roughness:0.5, metalness:0.2,
                                                 emissive:0x120a00, emissiveIntensity:1});
 var PANEL_MAT = new THREE.MeshStandardMaterial({color:0x0f1215, roughness:0.85, metalness:0.2});
+var ramps = [];    // axis aligned slopes the player runs up without breaking stride
 
-function pad(name, x, z, hw, hd, top, thick){
-  thick = thick || 0.34;
+function addBox(x0, x1, z0, z1, y0, y1, v){
+  boxes.push({x0:x0, x1:x1, z0:z0, z1:z1, y0:y0, y1:y1, v:v || 'on'});
+}
+
+// a slope: y0 at the x0/z0 end, y1 at the x1/z1 end. The slab hangs `thick`
+// under the walking surface, so feet stand on exactly the y0 -> y1 line.
+function ramp(name, x0, x1, z0, z1, y0, y1, thick){
+  thick = thick || 0.24;
+  // normalise so the slope always rises toward +x or +z along the axis it runs
+  var alongX = Math.abs(x1 - x0) >= Math.abs(z1 - z0);
+  if (alongX){ if (x1 < x0){ var tx = x0; x0 = x1; x1 = tx; var tyx = y0; y0 = y1; y1 = tyx; } }
+  else       { if (z1 < z0){ var tz = z0; z0 = z1; z1 = tz; var tyz = y0; y0 = y1; y1 = tyz; } }
+  var run  = alongX ? (x1 - x0) : (z1 - z0);
+  var ang  = Math.atan2(y1 - y0, run);
+  var len  = Math.sqrt(run*run + (y1-y0)*(y1-y0));
+  var half = thick / 2;
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(
+    alongX ? new THREE.BoxGeometry(len, thick, z1 - z0)
+           : new THREE.BoxGeometry(x1 - x0, thick, len), STEP_MAT);
+  body.castShadow = true; body.receiveShadow = true; body.name = name;
+  g.add(body);
+  var lip, s;
+  for (s = -1; s <= 1; s += 2){
+    if (alongX){
+      lip = new THREE.Mesh(new THREE.BoxGeometry(len, 0.05, 0.07), EDGE_MAT);
+      lip.position.set(0, half + 0.02, s*((z1 - z0)/2 - 0.035));
+    } else {
+      lip = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.05, len), EDGE_MAT);
+      lip.position.set(s*((x1 - x0)/2 - 0.035), half + 0.02, 0);
+    }
+    g.add(lip);
+  }
+  // place the slab so its top face lies on the y0 -> y1 line
+  if (alongX){
+    g.rotation.z = ang;
+    g.position.set((x0+x1)/2 + Math.sin(ang)*half, (y0+y1)/2 - Math.cos(ang)*half, (z0+z1)/2);
+  } else {
+    g.rotation.x = -ang;
+    g.position.set((x0+x1)/2, (y0+y1)/2 - Math.cos(ang)*half, (z0+z1)/2 + Math.sin(ang)*half);
+  }
+  scene.add(g);
+  padSolids.push(body);
+  ramps.push({x0:x0, x1:x1, z0:z0, z1:z1, y0:y0, y1:y1, axis:alongX ? 'x' : 'z', name:name});
+  return body;
+}
+
+// a leg, so built structures read as built and not hung in the air
+function post(x, z, y0, y1, r){
+  r = r || 0.07;
+  var m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, y1 - y0, 8), STEP_MAT);
+  m.position.set(x, (y0 + y1)/2, z);
+  m.castShadow = true;
+  scene.add(m);
+  padSolids.push(m);
+  return m;
+}
+
+function pad(name, x, z, hw, hd, top, thick, glow){
+  thick = thick || 0.26;
   var g = new THREE.Group();
   var body = new THREE.Mesh(new THREE.BoxGeometry(hw*2, thick, hd*2), STEP_MAT);
   body.position.y = top - thick/2;
-  body.castShadow = true; body.receiveShadow = true;
+  body.castShadow = true; body.receiveShadow = true; body.name = name;
   g.add(body);
   // lit edge strip so the landing reads in the dark
   var edge = new THREE.Mesh(new THREE.BoxGeometry(hw*2 + 0.06, 0.045, hd*2 + 0.06), EDGE_MAT);
   edge.position.y = top + 0.012;
   g.add(edge);
-  var glow = new THREE.PointLight(0xffc070, 0.30, 4.0, 2);
-  glow.position.set(0, top + 0.35, 0);
-  g.add(glow);
+  if (glow){
+    var gl = new THREE.PointLight(0xffc070, glow, 5.0, 2);
+    gl.position.set(0, top + 0.4, 0);
+    g.add(gl);
+  }
   g.position.set(x, 0, z);
   scene.add(g);
   padSolids.push(body, edge);
@@ -131,52 +194,80 @@ function pad(name, x, z, hw, hd, top, thick){
   return g;
 }
 
-// the run: eight hops down the yard, zig-zagging, rising all the way.
-// rythem is 3.2m of centre spacing with 0.9 half-depth, so every gap is 1.4m,
-// and every step up is 0.45m. Easy to read, unforgiving if you walk it.
-var LAYOUT = [
-  // x,    hw,   hd,   top
-  [ 0.0, 1.80, 1.00, 0.55],
-  [ 1.2, 1.20, 0.90, 1.00],
-  [ 0.4, 1.00, 0.90, 1.45],
-  [-0.8, 0.40, 1.00, 1.90],   // balance beam: 0.8m wide, 2m long
-  [ 0.0, 1.00, 0.90, 2.35],
-  [ 1.2, 0.40, 1.00, 2.80],   // balance beam
-  [ 0.6, 1.00, 0.90, 3.25],
-  [-0.6, 1.20, 1.00, 3.70]
-];
-var PAD_Z0 = 7.0, PAD_STEP = 3.2;
-LAYOUT.forEach(function(L, i){
-  pad('p' + i, L[0], PAD_Z0 - i*PAD_STEP, L[1], L[2], L[3]);
-});
+// ---------------------------------------------------------------- the line
+// The route is built onto the baked yard instead of floating over it: floor,
+// the yellow rail, the pipe rack, one long ramp to the gantry, the gantry
+// deck, the pipe run west and a scaffold climb up the tank. Every coordinate
+// below is measured off the loaded glb, so feet land on the real surfaces.
 
-// finish gate over the last pad
+// 1. floor. The apron is the only new thing at ground level, and it is a step,
+//    not a platform: it catches the light so the start reads from the camera.
+pad('apron', 0, 10.5, 2.2, 1.6, 0.10, 0.20, 0.34);
+
+// 2. the rail line. The bake already has a curb (top 0.32) and a three bar
+//    yellow rail (top 1.28) across x -8.5..8.5 at z -2.2. The curb is a step,
+//    the rail is a vault.
+addBox(-13.0, 13.0, -2.55, -1.85, 0.00, 0.32, 'on');
+addBox( -8.5,  8.5, -2.26, -1.90, 0.32, 1.28, 'over');
+
+// 3. the pipe rack. Solid at its measured heights, so the yard's own pipes
+//    become the staircase: vault pipe_a (1.69), skim pipe_b (0.97), vault the
+//    catwalk (2.26). Then the catwalk runs the length of the yard to the tank.
+addBox(-17, 17, -7.34, -6.66, 1.01, 1.69, 'on');   // pipe_a
+addBox(-17, 17, -8.12, -7.68, 0.53, 0.97, 'on');   // pipe_b
+addBox(-17, 17, -8.76, -8.44, 1.94, 2.26, 'on');   // pipe_c
+pad('catwalk', -6.6, -8.6, 8.4, 0.55, 2.26, 0.14, 0.26);
+
+// 4. the ramp to the gantry, off the back of the rail on the right
+ramp('ramp_up', 11.6, 13.8, -2.60, -9.30, 0.06, 4.26);
+
+// 5. the gantry deck sits at 4.26; extend it east so the ramp arrives on it
+pad('deck_e', 12.0, -9.9, 1.8, 0.8, 4.26, 0.22, 0.26);
+
+// 6. the drop: a lit shelf at pipe_c height hanging off the gantry's north side
+pad('shelf', 9.4, -7.6, 1.4, 1.5, 2.26, 0.18, 0.24);
+
+// 6. the tank cap is a real surface, and the high point of the yard
+addBox(-13.55, -7.45, -15.05, -8.95, 6.81, 6.99, 'on');
+
+// 7. the climb: one long flight up the tank's west face, pipe height to cap
+//    height in a single run, then a step east onto the cap. No stopping.
+pad ('tw0',  -15.4,  -8.55, 0.90, 0.65, 2.26, 0.18, 0.24);
+ramp('tw_up', -16.2, -14.6, -9.20, -17.00, 2.26, 6.99);
+pad ('tw_top', -14.85, -15.95, 1.45, 1.05, 6.99, 0.18, 0.26);
+
+// the second way in, from the yard floor, so a fall near the tank is not a
+// dead end: you can always walk back up to the climb
+ramp('tank_in', -17.6, -15.9, -13.20, -8.60, 0.06, 2.26);
+
+// legs, so the scaffold reads as built and not hung in the air
+post(-15.4,  -8.55, 0, 2.17);
+post(-15.4, -10.60, 0, 3.11);
+post(-16.1, -13.10, 0, 4.63);
+post(-15.4, -15.60, 0, 6.14);
+post(-13.9, -16.60, 0, 6.75);
+
+// 8. finish: the tank cap is the high point of the yard
+var FINISH = {x:-10.5, y:6.99, z:-12.0};
 (function(){
-  var FX = -0.6, FZ = 7.0 - 7*3.2, FY = 3.7;
-  var post = new THREE.MeshStandardMaterial({color:0x14171a, roughness:0.6, metalness:0.6});
-  for (var s=-1; s<=1; s+=2){
-    var p = new THREE.Mesh(new THREE.BoxGeometry(0.09, 2.1, 0.09), post);
-    p.position.set(FX + s*1.35, FY + 1.05, FZ); p.castShadow = true; scene.add(p);
-  }
-  var bar = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.09, 0.09), post);
-  bar.position.set(FX, FY + 2.1, FZ); scene.add(bar);
-  var lamp = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), new THREE.MeshBasicMaterial({color:0x9dffbe}));
-  lamp.position.set(FX, FY + 2.1, FZ); scene.add(lamp);
-  var gl = new THREE.PointLight(0x86ffb0, 2.4, 11, 2);
-  gl.position.set(FX, FY + 1.9, FZ); scene.add(gl);
+  var lamp = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 10),
+                            new THREE.MeshBasicMaterial({color:0x9dffbe}));
+  lamp.position.set(-10.5, 7.85, -12.0); scene.add(lamp);
+  var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.85, 8), STEP_MAT);
+  pole.position.set(-10.5, 7.42, -12.0); scene.add(pole);
+  var gl = new THREE.PointLight(0x86ffb0, 2.6, 12, 2);
+  gl.position.set(-10.5, 7.70, -12.0); scene.add(gl);
 })();
 
-// checkpoints: index into the pad list
+// waypoints. R drops you at the last one; yaw is the direction you face there.
 var CHECKPOINTS = [
-  {x: 0.0, z:7.0,     y:0.55, label:'START'},
-  {x:-0.8, z:7.0-3*3.2, y:1.90, label:'BEAM'},
-  {x: 1.2, z:7.0-5*3.2, y:2.80, label:'HIGH'},
-  {x:-0.6, z:7.0-7*3.2, y:3.70, label:'GATE'}
+  {x:  0.0, y:0.10, z: 10.5, label:'START',  yaw:0},
+  {x:  0.0, y:0.00, z: -3.4, label:'YARD',   yaw:0},
+  {x:  0.0, y:2.26, z: -8.6, label:'PIPE',   yaw:Math.PI/2},
+  {x:-15.4, y:2.26, z: -8.55,label:'TANK',   yaw:0}
 ];
-var FINISH = {x:-0.6, z:7.0-7*3.2, y:3.70};
 
-// yard obstacles that still block you
-var walls = [{x0:-8.6, x1:8.6, z0:-2.55, z1:-1.85, y0:0, y1:1.3}];
+// the tank only blocks at ground level; above its flange the scaffold rules
 var TANK = {x:-10.5, z:-12.0, r:3.2};
 
 // ---------------------------------------------------------------- baked yard
@@ -351,12 +442,14 @@ var START_CHAR = 'waldo';
 loadChar(START_CHAR);
 
 // ---------------------------------------------------------------- third person camera
-var CAM = { mode:'third', yaw:0, pitch:0.17, dist:3.05, cur:3.05, shoulder:0.45, target:new THREE.Vector3() };
+var CAM = { mode:'third', yaw:0, pitch:0.17, dist:3.10, cur:3.10, shoulder:0.22,
+            target:new THREE.Vector3(), idle:9 };
 var camRay = new THREE.Raycaster();
 var camSolids = padSolids;
 
 function placeCamera(dt){
   var eyeY = 1.34;
+  var spd = Math.hypot(P.vel.x, P.vel.z);
   CAM.target.set(P.pos.x, P.pos.y + eyeY, P.pos.z);
 
   if (CAM.mode === 'first'){
@@ -365,13 +458,29 @@ function placeCamera(dt){
     return;
   }
 
+  // swing back behind the run on its own, unless the player is looking around
+  // or running at the camera
+  CAM.idle += dt;
+  if (CAM.idle > 0.9 && spd > 1.4 && !P.vault){
+    var fwdX = -Math.sin(CAM.yaw), fwdZ = -Math.cos(CAM.yaw);
+    if ((P.vel.x * fwdX + P.vel.z * fwdZ) / spd > 0.2){
+      var ty = Math.atan2(-P.vel.x, -P.vel.z);
+      var dd = ((ty - CAM.yaw + Math.PI*3) % (Math.PI*2)) - Math.PI;
+      CAM.yaw += dd * Math.min(1, dt * 1.7);
+    }
+  }
+
+  // the lens opens and the arm pays out a little at speed
+  var wantFov = 64 + Math.min(7, spd * 1.1);
+  var wantDist = CAM.dist + Math.min(0.75, spd * 0.10);
+
   var cp = Math.cos(CAM.pitch), sp = Math.sin(CAM.pitch);
   var dir = new THREE.Vector3(Math.sin(CAM.yaw) * cp, sp, Math.cos(CAM.yaw) * cp);
   // shoulder offset so the body sits left of centre, the way a follow cam does
   var right = new THREE.Vector3(Math.cos(CAM.yaw), 0, -Math.sin(CAM.yaw));
   CAM.target.addScaledVector(right, CAM.shoulder);
   // pull in if a pad or the yard is between us and the character
-  var want = CAM.target.clone().addScaledVector(dir, CAM.dist);
+  var want = CAM.target.clone().addScaledVector(dir, wantDist);
   var toCam = want.clone().sub(CAM.target);
   var len = toCam.length();
   camRay.set(CAM.target, toCam.normalize());
@@ -383,6 +492,10 @@ function placeCamera(dt){
   CAM.cur += (len - CAM.cur) * Math.min(1, dt * (len < CAM.cur ? 18 : 6));
   camera.position.copy(CAM.target).addScaledVector(dir, CAM.cur);
   camera.lookAt(CAM.target.x - Math.sin(CAM.yaw)*0.55, CAM.target.y + 0.12, CAM.target.z - Math.cos(CAM.yaw)*0.55);
+  if (Math.abs(camera.fov - wantFov) > 0.02){
+    camera.fov += (wantFov - camera.fov) * Math.min(1, dt * 3.2);
+    camera.updateProjectionMatrix();
+  }
 }
 
 function animateAvatar(dt, speed){
@@ -421,12 +534,31 @@ function animateAvatar(dt, speed){
 }
 
 // ---------------------------------------------------------------- player
+// every number that decides how it feels lives here, so tuning is one block
+var TUNE = {
+  gravity:   19.5,
+  jump:       6.4,
+  walk:       3.0,
+  run:        5.0,
+  accelG:    14.0,   // m/s^2 toward the wish speed on the ground
+  accelA:     3.5,   // same in the air, so a jump keeps what it launched with
+  steerG:     7.5,   // rad/s the velocity can swing while grounded
+  steerA:     2.2,   // rad/s in the air
+  brakeG:     5.0,
+  brakeA:     0.4,
+  landKeep:   0.94,  // fraction of speed kept when you touch down
+  stepUp:     0.42,  // anything this low is a step, not a wall
+  vaultMax:   1.75,  // highest lip you can mantle onto at speed
+  vaultKeep:  0.92,
+  coyote:     0.10,
+  buffer:     0.15
+};
 var P = {
-  pos: new THREE.Vector3(0, 0.55, 7.0),   // feet
+  pos: new THREE.Vector3(0, 0.12, 10.5),  // feet
   vel: new THREE.Vector3(),
   yaw: 0, pitch: -0.05,
   radius: 0.32, height: 1.68,
-  grounded: true, coyote: 0, jumpBuffer: 0
+  grounded: true, coyote: 0, jumpBuffer: 0, vault: null
 };
 var G = { mode:'title', time:0, running:false, cp:0, best:null, msg:'', msgT:0 };
 var keys = {};
@@ -436,8 +568,8 @@ var LOOK = {active:false, id:null, lx:0, ly:0};
 try { G.best = parseFloat(localStorage.getItem('dl_course_best')) || null; } catch(e){}
 
 document.addEventListener('keydown', function(e){
-  if (e.code === 'Space'){ P.jumpBuffer = 0.14; e.preventDefault(); }
-  if (e.code === 'KeyR' && G.mode !== 'title') reset(true);
+  if (e.code === 'Space'){ P.jumpBuffer = TUNE.buffer; e.preventDefault(); }
+  if (e.code === 'KeyR' && G.mode !== 'title'){ if (e.shiftKey) reset(true); else reset(false); }
   keys[e.code] = true;
   if (G.mode === 'title' && (e.code === 'Enter' || e.code === 'Space')) start();
 });
@@ -451,7 +583,7 @@ canvas.addEventListener('click', function(){
 canvas.addEventListener('mousedown', function(e){
   if (e.button !== 0 || G.mode !== 'play' || IS_TOUCH) return;
   e.preventDefault();
-  P.jumpBuffer = 0.16;
+  P.jumpBuffer = TUNE.buffer;
 });
 document.addEventListener('mousemove', function(e){
   if (G.mode === 'title' || LOOK.active) return;
@@ -459,6 +591,7 @@ document.addEventListener('mousemove', function(e){
   CAM.yaw   -= e.movementX * 0.0024;
   CAM.pitch += e.movementY * 0.0018;
   CAM.pitch = Math.max(-0.55, Math.min(0.95, CAM.pitch));
+  CAM.idle = 0;
 });
 
 document.addEventListener('keydown', function(e){
@@ -521,79 +654,154 @@ canvas.addEventListener('touchend', function(e){
   }
 }, {passive:false});
 document.getElementById('jump').addEventListener('touchstart', function(e){
-  P.jumpBuffer = 0.16; e.preventDefault(); e.stopPropagation();
+  P.jumpBuffer = TUNE.buffer; e.preventDefault(); e.stopPropagation();
 }, {passive:false});
 
 // ---------------------------------------------------------------- physics
+// Two things turn hops into traversal: steps raise you without stopping, and
+// slopes are continuous ground. Both resolve in the vertical pass, so the
+// horizontal pass only ever blocks on something you cannot simply run up.
 function overlapXZ(b, x, z, r){
   return x + r > b.x0 && x - r < b.x1 && z + r > b.z0 && z - r < b.z1;
 }
+function rampY(r, x, z){
+  var t = r.axis === 'z' ? (z - r.z0)/(r.z1 - r.z0) : (x - r.x0)/(r.x1 - r.x0);
+  return r.y0 + (r.y1 - r.y0) * Math.max(0, Math.min(1, t));
+}
+
+// highest surface at or below feet+reach at this xz, or null
+function surfaceAt(x, z, feet, reach){
+  var best = null, i, b;
+  for (i=0;i<boxes.length;i++){
+    b = boxes[i];
+    if (b.y1 > feet + reach) continue;
+    if (!overlapXZ(b, x, z, P.radius)) continue;
+    if (best === null || b.y1 > best) best = b.y1;
+  }
+  for (i=0;i<ramps.length;i++){
+    b = ramps[i];
+    var ry = rampY(b, x, z);
+    if (ry > feet + reach) continue;
+    if (!overlapXZ(b, x, z, P.radius * 0.6)) continue;
+    if (best === null || ry > best) best = ry;
+  }
+  return best;
+}
+
+// a vault: knee height to shoulder height, taken at speed, momentum kept
+function beginVault(b, axis, spd, vx, vz){
+  var dx = 0, dz = 0;
+  if (axis === 'x') dx = vx >= 0 ? 1 : -1; else dz = vz >= 0 ? 1 : -1;
+  var tx = P.pos.x, tz = P.pos.z;
+  if (axis === 'x'){
+    if (b.v === 'over') tx = (dx > 0 ? b.x1 : b.x0) + dx * (P.radius + 0.12);
+    else tx = Math.max(b.x0 + P.radius*0.6, Math.min(b.x1 - P.radius*0.6, P.pos.x + dx * 0.55));
+  } else {
+    if (b.v === 'over') tz = (dz > 0 ? b.z1 : b.z0) + dz * (P.radius + 0.12);
+    else tz = Math.max(b.z0 + P.radius*0.6, Math.min(b.z1 - P.radius*0.6, P.pos.z + dz * 0.55));
+  }
+  P.vault = {
+    t:0, dur:0.20 + Math.min(0.14, Math.max(0, b.y1 - P.pos.y) * 0.10),
+    from: P.pos.clone(), to: new THREE.Vector3(tx, b.y1 + 0.005, tz),
+    dirX: dx, dirZ: dz, spd: Math.max(spd, 2.4)
+  };
+  P.vel.set(0, 0, 0);
+  P.grounded = false;
+  G.msg = ''; G.msgT = 0;
+}
+
+function stepVault(dt){
+  var v = P.vault;
+  v.t += dt;
+  var k = Math.min(1, v.t / v.dur);
+  var e = k * k * (3 - 2 * k);                 // smoothstep across the lip
+  var arc = Math.sin(Math.PI * k) * 0.20;      // small hop so it reads as a vault
+  P.pos.x = v.from.x + (v.to.x - v.from.x) * e;
+  P.pos.z = v.from.z + (v.to.z - v.from.z) * e;
+  P.pos.y = v.from.y + (v.to.y - v.from.y) * e + arc;
+  AV.yaw += ((((Math.atan2(-v.dirX, -v.dirZ) - AV.yaw + Math.PI*3) % (Math.PI*2)) - Math.PI)) * Math.min(1, dt * 18);
+  if (k >= 1){
+    P.pos.copy(v.to);
+    P.vel.set(v.dirX * v.spd * TUNE.vaultKeep, 0, v.dirZ * v.spd * TUNE.vaultKeep);
+    P.grounded = true; P.coyote = TUNE.coyote;
+    P.vault = null;
+  }
+}
 
 function moveAndCollide(dt){
+  if (P.vault){ stepVault(dt); return; }
   var steps = 2, h = dt/steps;
   for (var s=0; s<steps; s++){
-    // vertical
-    P.vel.y -= 19.5 * h;
-    var ny = P.pos.y + P.vel.y * h;
-    var wasGrounded = false;
-    for (var i=0;i<boxes.length;i++){
-      var b = boxes[i];
-      if (!overlapXZ(b, P.pos.x, P.pos.z, P.radius)) continue;
-      if (P.vel.y <= 0 && P.pos.y >= b.y1 - 0.02 && ny <= b.y1){
-        ny = b.y1; P.vel.y = 0; wasGrounded = true;
-      } else if (P.vel.y > 0 && P.pos.y + P.height <= b.y0 + 0.02 && ny + P.height >= b.y0){
-        ny = b.y0 - P.height; P.vel.y = 0;
-      }
-    }
-    if (ny <= 0){ ny = 0; P.vel.y = 0; wasGrounded = true; }
-    P.pos.y = ny;
-    // landing kills some momentum so a fast jump sticks instead of sliding off
-    if (wasGrounded && !P.grounded){
-      P.vel.x *= 0.55;
-      P.vel.z *= 0.55;
-    }
-    P.grounded = wasGrounded;
+    var preVX = P.vel.x, preVZ = P.vel.z;
+    var preSpd = Math.hypot(preVX, preVZ);
 
-    // horizontal, axis by axis so a wall stops one axis and you slide on the other
-    var nx = P.pos.x + P.vel.x * h;
-    for (var j=0;j<boxes.length;j++){
-      var bx = boxes[j];
-      if (P.pos.y + P.height <= bx.y0 + 0.01 || P.pos.y >= bx.y1 - 0.01) continue;
-      if (nx + P.radius > bx.x0 && nx - P.radius < bx.x1 && P.pos.z + P.radius > bx.z0 && P.pos.z - P.radius < bx.z1){
-        nx = P.vel.x > 0 ? bx.x0 - P.radius : bx.x1 + P.radius;
-        P.vel.x = 0;
+    // vertical: fall, land, step up, or stay glued to a slope going down
+    P.vel.y -= TUNE.gravity * h;
+    var ny = P.pos.y + P.vel.y * h;
+    var wasGrounded = P.grounded;
+    var grounded = false;
+    if (P.vel.y <= 0){
+      var sup = surfaceAt(P.pos.x, P.pos.z, P.pos.y, TUNE.stepUp);
+      if (sup !== null && ny <= sup){ ny = sup; P.vel.y = 0; grounded = true; }
+      else if (wasGrounded && sup !== null && sup < ny && ny - sup <= 0.40){ ny = sup; P.vel.y = 0; grounded = true; }
+    } else {
+      for (var c=0;c<boxes.length;c++){
+        var cb = boxes[c];
+        if (P.pos.y + P.height <= cb.y0 + 0.02 || ny + P.height < cb.y0) continue;
+        if (overlapXZ(cb, P.pos.x, P.pos.z, P.radius) && ny + P.height >= cb.y0){
+          ny = cb.y0 - P.height; P.vel.y = 0;
+        }
       }
     }
-    for (var k=0;k<walls.length;k++){
-      var w = walls[k];
-      if (P.pos.y + P.height <= w.y0 + 0.01 || P.pos.y >= w.y1 - 0.01) continue;
-      if (nx + P.radius > w.x0 && nx - P.radius < w.x1 && P.pos.z + P.radius > w.z0 && P.pos.z - P.radius < w.z1){
-        nx = P.vel.x > 0 ? w.x0 - P.radius : w.x1 + P.radius; P.vel.x = 0;
-      }
+    if (ny <= 0){ ny = 0; P.vel.y = 0; grounded = true; }
+    P.pos.y = ny;
+    // only shave momentum on a real landing, never on a step
+    if (grounded && !wasGrounded && P.vel.y === 0 && ny > 0.35){
+      P.vel.x *= TUNE.landKeep; P.vel.z *= TUNE.landKeep;
+    }
+    P.grounded = grounded;
+
+    // horizontal, one axis at a time so a wall stops one axis and you slide on the other
+    var hit = null, j, bx;
+    var nx = P.pos.x + P.vel.x * h;
+    for (j=0;j<boxes.length;j++){
+      bx = boxes[j];
+      if (P.pos.y + P.height <= bx.y0 + 0.02 || P.pos.y >= bx.y1 - 0.02) continue;
+      if (!(nx + P.radius > bx.x0 && nx - P.radius < bx.x1 &&
+            P.pos.z + P.radius > bx.z0 && P.pos.z - P.radius < bx.z1)) continue;
+      if (P.grounded && bx.y1 - P.pos.y <= TUNE.stepUp) continue;   // a step, vertical takes it
+      if (!hit || bx.y1 < hit.b.y1) hit = {b:bx, axis:'x'};
+      nx = P.vel.x > 0 ? bx.x0 - P.radius : bx.x1 + P.radius;
+      P.vel.x = 0;
     }
     P.pos.x = nx;
 
     var nz = P.pos.z + P.vel.z * h;
-    for (var m=0;m<boxes.length;m++){
-      var bz = boxes[m];
-      if (P.pos.y + P.height <= bz.y0 + 0.01 || P.pos.y >= bz.y1 - 0.01) continue;
-      if (P.pos.x + P.radius > bz.x0 && P.pos.x - P.radius < bz.x1 && nz + P.radius > bz.z0 && nz - P.radius < bz.z1){
-        nz = P.vel.z > 0 ? bz.z0 - P.radius : bz.z1 + P.radius;
-        P.vel.z = 0;
-      }
-    }
-    for (var n=0;n<walls.length;n++){
-      var w2 = walls[n];
-      if (P.pos.y + P.height <= w2.y0 + 0.01 || P.pos.y >= w2.y1 - 0.01) continue;
-      if (P.pos.x + P.radius > w2.x0 && P.pos.x - P.radius < w2.x1 && nz + P.radius > w2.z0 && nz - P.radius < w2.z1){
-        nz = P.vel.z > 0 ? w2.z0 - P.radius : w2.z1 + P.radius; P.vel.z = 0;
-      }
+    for (j=0;j<boxes.length;j++){
+      bx = boxes[j];
+      if (P.pos.y + P.height <= bx.y0 + 0.02 || P.pos.y >= bx.y1 - 0.02) continue;
+      if (!(P.pos.x + P.radius > bx.x0 && P.pos.x - P.radius < bx.x1 &&
+            nz + P.radius > bx.z0 && nz - P.radius < bx.z1)) continue;
+      if (P.grounded && bx.y1 - P.pos.y <= TUNE.stepUp) continue;
+      if (!hit || bx.y1 < hit.b.y1) hit = {b:bx, axis:'z'};
+      nz = P.vel.z > 0 ? bx.z0 - P.radius : bx.z1 + P.radius;
+      P.vel.z = 0;
     }
     P.pos.z = nz;
 
+    // ran into something waist high at speed: vault it instead of stopping
+    if (hit && preSpd > 1.2 && (hit.axis === 'x' ? preVX : preVZ) !== 0){
+      var rise = hit.b.y1 - P.pos.y;
+      if (rise > TUNE.stepUp && rise <= TUNE.vaultMax && (P.grounded || P.vel.y < 1.2)){
+        beginVault(hit.b, hit.axis, preSpd, preVX, preVZ);
+        return;
+      }
+    }
+
+    // the tank is solid at ground level only
     var tdx = P.pos.x - TANK.x, tdz = P.pos.z - TANK.z;
-    var td = Math.hypot(tdx, tdz);
-    if (td < TANK.r + P.radius && P.pos.y < 6.9){
+    var td = Math.hypot(tdx, tdz) || 0.001;
+    if (td < TANK.r + P.radius && P.pos.y < 1.9){
       var push = (TANK.r + P.radius - td);
       P.pos.x += (tdx/td) * push; P.pos.z += (tdz/td) * push;
     }
@@ -740,7 +948,7 @@ var POST = (function(){
 function setCP(i){
   if (i <= G.cp) return;
   G.cp = i;
-  G.msg = 'CHECKPOINT — ' + CHECKPOINTS[i].label;
+  G.msg = 'MARKER — ' + CHECKPOINTS[i].label;
   G.msgT = 1.6;
   document.querySelector('#cp b').textContent = CHECKPOINTS[i].label;
 }
@@ -749,8 +957,13 @@ function reset(full){
   var c = CHECKPOINTS[full ? 0 : G.cp];
   P.pos.set(c.x, c.y + 0.02, c.z);
   P.vel.set(0, 0, 0);
-  P.grounded = true;
-  if (full){ G.cp = 0; G.time = 0; G.running = false;
+  P.vault = null;
+  P.grounded = true; P.coyote = 0; P.jumpBuffer = 0;
+  G.running = full ? false : G.running;
+  CAM.yaw = c.yaw; CAM.idle = 9;
+  AV.yaw = c.yaw;
+  AV.root.position.set(P.pos.x, P.pos.y, P.pos.z);
+  if (full){ G.cp = 0; G.time = 0;
     document.querySelector('#cp b').textContent = 'START'; }
 }
 
@@ -779,7 +992,7 @@ function finish(){
   s.style.display = 'flex';
   s.innerHTML = '<h1 style="color:#9dffbe">' + t + '</h1>' +
     '<h2>' + (best ? 'NEW BEST' : 'BEST ' + G.best.toFixed(2)) + '</h2>' +
-    '<p>You made the gate without touching the ground.</p>' +
+    '<p>That is the high point of the yard. Run it again and carry more of it.</p>' +
     '<button id="go">RUN AGAIN</button>';
   document.getElementById('go').addEventListener('click', function(){ location.reload(); });
 }
@@ -788,7 +1001,7 @@ function finish(){
 var clock = new THREE.Clock();
 function frame(){
   var dt = Math.min(clock.getDelta(), 0.05);
-  if (G.mode === 'play') update(dt);
+  if (G.mode === 'play' && !G.pause) update(dt);
   if (window.POST_ON === false){
     renderer.setRenderTarget(null);
     renderer.render(scene, camera);
@@ -812,47 +1025,61 @@ function update(dt){
   if (moving && !G.running){ G.running = true; }
   if (G.running) G.time += dt;
 
-  var speed = running ? 4.0 : 2.6;
   var len = Math.hypot(fwd, side);
   if (len > 1){ fwd /= len; side /= len; len = 1; }
 
   var sinY = Math.sin(CAM.yaw), cosY = Math.cos(CAM.yaw);
   var wishX = (-fwd*sinY + side*cosY);
   var wishZ = (-fwd*cosY - side*sinY);
-  if (len > 0.02){
+  if (len > 0.02 && !P.vault){
     var wantYaw = Math.atan2(-wishX, -wishZ);
     var d = ((wantYaw - AV.yaw + Math.PI*3) % (Math.PI*2)) - Math.PI;
-    AV.yaw += d * Math.min(1, dt * 13);
+    AV.yaw += d * Math.min(1, dt * 11);
   }
 
-  // snappier ground control, floatier in the air
-  var accel = P.grounded ? 42 : 11;
-  P.vel.x += (wishX*speed - P.vel.x) * Math.min(1, accel*dt);
-  P.vel.z += (wishZ*speed - P.vel.z) * Math.min(1, accel*dt);
+  // momentum. Speed climbs toward walk/run, the velocity you already have is
+  // steered rather than replaced, and nothing is scrubbed while you are in the
+  // air. A vault or a long fall therefore carries into the next beat.
+  if (!P.vault){
+    var want = running ? TUNE.run : TUNE.walk;
+    var spd = Math.hypot(P.vel.x, P.vel.z);
+    if (len > 0.02){
+      var mag = spd;
+      if (mag < want) mag = Math.min(want, mag + (P.grounded ? TUNE.accelG : TUNE.accelA) * dt);
+      else if (P.grounded && mag > want + 0.02) mag = Math.max(want, mag - TUNE.brakeG * dt);
+      var curYaw = spd > 0.02 ? Math.atan2(P.vel.x, P.vel.z) : Math.atan2(wishX, wishZ);
+      var wYaw = Math.atan2(wishX, wishZ);
+      var dd = ((wYaw - curYaw + Math.PI*3) % (Math.PI*2)) - Math.PI;
+      var rate = (P.grounded ? TUNE.steerG : TUNE.steerA) * dt;
+      curYaw += Math.max(-rate, Math.min(rate, dd));
+      P.vel.x = Math.sin(curYaw) * mag;
+      P.vel.z = Math.cos(curYaw) * mag;
+    } else {
+      var br = Math.min(1, (P.grounded ? TUNE.brakeG : TUNE.brakeA) * dt);
+      P.vel.x -= P.vel.x * br;
+      P.vel.z -= P.vel.z * br;
+    }
+  }
 
   // jump with coyote time and a small input buffer
-  P.coyote = P.grounded ? 0.10 : Math.max(0, P.coyote - dt);
+  P.coyote = P.grounded ? TUNE.coyote : Math.max(0, P.coyote - dt);
   P.jumpBuffer = Math.max(0, P.jumpBuffer - dt);
-  if (P.jumpBuffer > 0 && P.coyote > 0){
-    P.vel.y = 6.2;
+  if (P.jumpBuffer > 0 && P.coyote > 0 && !P.vault){
+    P.vel.y = TUNE.jump;
     P.grounded = false; P.coyote = 0; P.jumpBuffer = 0;
   }
 
   moveAndCollide(dt);
 
-  // the yard floor is out of bounds once you leave the first pad
-  if (P.pos.y < 0.05 && P.grounded && G.running){
-    reset(false);
-    G.msg = G.cp > 0 ? 'BACK TO ' + CHECKPOINTS[G.cp].label : 'BACK TO THE START';
-    G.msgT = 1.5;
-  }
+  // the yard floor is ground, not lava. falling costs you the climb, not the run.
+  if (P.pos.y < -6) { reset(false); G.msg = 'BACK TO ' + CHECKPOINTS[G.cp].label; G.msgT = 1.5; }
 
-  // checkpoints and finish
+  // markers and finish
   for (var i=1;i<CHECKPOINTS.length;i++){
     var c = CHECKPOINTS[i];
-    if (Math.abs(P.pos.x - c.x) < 1.3 && Math.abs(P.pos.z - c.z) < 1.3 && Math.abs(P.pos.y - c.y) < 0.6) setCP(i);
+    if (Math.abs(P.pos.x - c.x) < 1.5 && Math.abs(P.pos.z - c.z) < 1.5 && Math.abs(P.pos.y - c.y) < 0.7) setCP(i);
   }
-  if (Math.abs(P.pos.x - FINISH.x) < 1.7 && Math.abs(P.pos.z - FINISH.z) < 1.6 && Math.abs(P.pos.y - FINISH.y) < 0.8){
+  if (Math.abs(P.pos.x - FINISH.x) < 3.4 && Math.abs(P.pos.z - FINISH.z) < 3.2 && Math.abs(P.pos.y - FINISH.y) < 0.7){
     finish(); return;
   }
 
@@ -863,6 +1090,8 @@ function update(dt){
   // hud
   document.querySelector('#clock').innerHTML = G.time.toFixed(2) + '<small>RUN</small>';
   document.getElementById('best').innerHTML = G.best === null ? 'NO TIME SET' : 'BEST ' + G.best.toFixed(2);
+  var spdNow = Math.hypot(P.vel.x, P.vel.z);
+  document.getElementById('spd').textContent = spdNow.toFixed(1) + ' M/S' + (P.vault ? ' · VAULT' : '');
   if (G.msgT > 0){ G.msgT -= dt; document.getElementById('msg').textContent = G.msg; }
   else document.getElementById('msg').textContent = '';
 }
@@ -876,15 +1105,29 @@ window.addEventListener('resize', function(){
 });
 
 window.COURSE = {
+  TUNE: TUNE,
   state: function(){
+    var spd = Math.hypot(P.vel.x, P.vel.z);
     return { mode:G.mode, time:+G.time.toFixed(2), cp:G.cp, grounded:P.grounded,
+             vault: !!P.vault, spd:+spd.toFixed(2),
              pos:[+P.pos.x.toFixed(2), +P.pos.y.toFixed(2), +P.pos.z.toFixed(2)],
              vel:[+P.vel.x.toFixed(2), +P.vel.y.toFixed(2), +P.vel.z.toFixed(2)],
-             pads: boxes.length, ready: window.YARD_READY === true, cam: CAM.mode, camDist: +CAM.cur.toFixed(2) };
+             pads: boxes.length, ramps: ramps.length, fov:+camera.fov.toFixed(1),
+             camYaw:+CAM.yaw.toFixed(3),
+             ready: window.YARD_READY === true, cam: CAM.mode, camDist: +CAM.cur.toFixed(2) };
   },
-  place: function(x, y, z){ P.pos.set(x, y, z); P.vel.set(0,0,0); },
-  look: function(yaw, pitch){ CAM.yaw = yaw; if (pitch !== undefined) CAM.pitch = -pitch; },
+  place: function(x, y, z){ P.pos.set(x, y, z); P.vel.set(0,0,0); P.vault = null; P.grounded = false; },
+  look: function(yaw, pitch){ CAM.yaw = yaw; if (pitch !== undefined) CAM.pitch = -pitch; CAM.idle = 0; },
   cam: function(mode){ CAM.mode = mode; },
+  respawn: function(i){ G.cp = i === undefined ? G.cp : i; reset(false); },
+  // deterministic test driver: freeze the render loop, step the sim by hand
+  sim: function(n, dt){
+    G.pause = true;
+    for (var i=0;i<(n||1);i++) update(dt || 1/60);
+    return this.state();
+  },
+  resume: function(){ G.pause = false; },
+  press: function(code, down){ keys[code] = !!down; },
   dbg: function(){ return { scene: scene, av: AV, camera: camera, P: P, ch: CH, act: ACT, renderer: renderer, holder: HOLDER }; },
   screen: function(y){
     var v = new THREE.Vector3(AV.root.position.x, AV.root.position.y + (y||1.0), AV.root.position.z);
