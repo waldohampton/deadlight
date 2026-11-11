@@ -1,6 +1,22 @@
 # DEADLIGHT — progress and handoff
 
-Last session: 2026-11-11. Branch `master`, working tree clean.
+Last session: 2026-11-11, commit `fa0fa13`. Branch `master`, working tree clean, pushed.
+
+## This session, 2026-11-11
+
+Waldo became the player and got a working body. Everything below is verified in a browser,
+not just in the diff.
+
+1. `models/waldo_game.glb` wired into `course.html` as a character, then made the only one.
+   The old soldier/mannequin/drone registry entries and the switching UI are gone.
+2. Idle reposed twice: first into a square stance (feet 0.387 m apart, arms in, elbows
+   flexed), then the pelvis tucked and the lumbar flattened after it read as lordosis.
+3. Walk and run arm swing was reversed and is fixed. Their forearms were hyperextending,
+   hands behind the elbows the whole cycle. Legs were correct and were left alone.
+4. Left mouse click jumps, alongside Space.
+5. Two Blender tools were added in `~/Downloads/waldo-character/tools/`: `idle_repose.py`,
+   `clips_repose.py`, plus `probe_idle_axes.py`, `probe_gait.py`, `probe_lordosis.py`.
+   The probes print numbers so rotation signs get measured instead of guessed.
 
 ## What this is
 
@@ -25,7 +41,7 @@ torch and a film pass on top.
 | `look*.html` | look-dev experiments: textures, scanned plants, DOF test |
 
 `course.html` is a single file, everything inline except `three.min.js`, `GLTFLoader.js`
-and `models/Soldier.glb`.
+and `models/waldo_game.glb`.
 
 ## Running it
 
@@ -73,12 +89,13 @@ Waldo's idle was reposed once already: the fitted rig rests in a narrow A-pose w
 25 degrees out, so the Idle clip builds a square stance instead. Measured in engine, stance
 0.387 m and hand spread 0.470 m, up from 0.190 / 0.810. The pelvis is also tucked 3.5 degrees
 with the spine column straightened, which cut the lumbar arch from 8.3 mm of anterior bow to
-1.5 mm. Walk and run still use the narrow base. To change how he stands again, edit the
-IDLE block in
+1.5 mm. Walk and run still use the narrow base.
+
+To change how he stands or moves: edit the IDLE / walk_pose / run_pose blocks in
 `~/Downloads/waldo-character/tools/step_g_cycles.py` for a full rebuild, or run
-`tools/idle_repose.py`, which rebuilds only the Idle clip in `waldo_final.blend` and
-re-exports the GLB. `tools/probe_idle_axes.py` prints bone world positions per rotation
-axis, which is how the signs were settled instead of by guessing.
+`tools/idle_repose.py` or `tools/clips_repose.py`, which rebuild only those clips in
+`waldo_final.blend` and re-export the GLB. `tools/probe_idle_axes.py` prints bone world
+positions per rotation axis, which is how the signs were settled instead of by guessing.
 
 Heads up on caching: the browser will happily render a stale `waldo_game.glb` after you
 replace the file. Bone positions in the console (`COURSE.dbg()`, walk the scene for
@@ -123,9 +140,15 @@ character setup, the spring-arm camera — is written up as a skill reference:
 ## Where it stands
 
 Working and verified: baked GI reads on every mesh, the lightmap toggle changes 44% of the
-night yard's pixels, third-person camera with collision pull-in, rigged character with
-speed-blended animation clips, jump/land/checkpoint/fall-reset/finish all exercised by real
-key events against the live build, film pass toggle measured on and off.
+night yard's pixels, third-person camera with collision pull-in, jump/land/checkpoint/
+fall-reset/finish all exercised by real key events against the live build, film pass toggle
+measured on and off.
+
+As of `fa0fa13`, verified in a browser against the live Pages build: Waldo loads as the only
+character with Idle/Walk/Run bound, walk crossfades in on W, arms oppose the legs, the run's
+elbows hold forward at about 90 degrees, the idle stance and lumbar numbers above, feet
+planted at 0.000 across the idle clip, left click jumps, right click does nothing, no console
+errors, and the camera settles back to 3.05 m once the yard finishes loading.
 
 ## Open items
 
@@ -138,16 +161,32 @@ key events against the live build, film pass toggle measured on and off.
 4. **Course feel is untuned by a human.** Gaps are 1.3m, run 4.0 m/s, jump 6.2, pads 1.8-2.0m
    long. Numbers are sane on paper but the test rig renders at 8fps, which changes timing.
 5. **No Android wrapper yet.** Capacitor is the plan, nothing scaffolded.
-6. **The character is a game soldier**, CC0 from the three.js examples. A scanned human with
-   skin and cloth needs paid assets and will not run here anyway.
-7. **`index.html` is still the old maze game** at the Pages root, so the site root and
+6. **Waldo's limits.** Procedural weights on 178 welded patches, no finger or facial bones,
+   one baked 2K texture. Deformation holds at the shoulders, hips, elbows and knees at 8
+   phases per clip. A proper retopo is what close-up hero work would need.
+7. **Walk feet skate a little.** The walk clip was authored at 1.45 m/s and the game walks at
+   2.6, so the stride scaler clamps at 1.6x. Correct fix is dropping the game's walk speed to
+   about 2.3, which changes course feel and is a human judgement call. The run matches.
+8. **Walk and run use the narrow base.** Only the idle got the square stance. The gait clips
+   still swing off a 0.19 m foot spacing inherited from the rest pose.
+9. **`index.html` is still the old maze game** at the Pages root, so the site root and
    `course.html` disagree about what this project is. Point the root at the course when the
    old build is retired.
 
 ## Gotchas that cost time
 
+- Two Blender installs are in play. Yard bakes run on the Linux 4.2 build in `~/opt` (needs
+  the `LD_LIBRARY_PATH` prefix). The character pipeline runs on the Windows 5.1 install:
+  `"/mnt/c/Program Files/Blender Foundation/Blender 5.1/blender.exe" -b -noaudio --python "C:\..."`.
+  It works headless straight from WSL.
+- Rotation signs are not guessable. `set_rot` applies world-axis rotations in rest space, so
+  positive rx swings an arm backward but flexes a knee correctly. Measure with
+  `probe_idle_axes.py` before authoring anything.
+- The automated browser renders this scene at a few fps, so sampling bone positions on a timer
+  yields two or three samples per second. Do pose and gait maths in Blender per frame instead;
+  use the browser only to confirm which build is actually loaded and how it looks.
 - Blender needs `libSM`/`libICE`; installed without sudo into `~/opt/xlibs` and passed via
-  `LD_LIBRARY_PATH`. Every Blender command needs that prefix.
+  `LD_LIBRARY_PATH`. Every Linux Blender command needs that prefix.
 - `uv_layers.active_render = layer` does nothing. Assign `layer.active_render = True`.
 - A ground plane with reversed winding receives no light and renders black while everything
   else looks fine. So does a PMREM env capture that goes to `inf` and turns ACES into NaN.
