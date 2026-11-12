@@ -397,26 +397,34 @@ var MODE = 'foot';
   CAR.root = g;
   CAR.vis = vis;
 
-  // the modelled body. If it never loads the box car above keeps driving.
-  new THREE.GLTFLoader().load('models/arrow_game.glb', function(gltf){
+  // the modelled body. Tripo's image-to-3D export first, then the hand-built
+  // loft if that file is missing, then the boxes above if both fail.
+  function fitArrow(gltf){
     var m = gltf.scene;
     m.traverse(function(o){
       if (!o.isMesh) return;
       o.castShadow = true; o.receiveShadow = false;
       var mt = o.material;
-      if (mt && mt.name === 'paint'){ mt.color.setHex(0x2b3038); mt.roughness = 0.44; mt.needsUpdate = true; }
-      if (mt && mt.name === 'dish'){ mt.roughness = 0.78; mt.metalness = 0.30; mt.needsUpdate = true; }
-      if (mt && mt.emissive && mt.emissive.getHex() !== 0) mt.emissiveIntensity = 1.4;
+      if (!mt) return;
+      if (mt.map){ mt.color.setHex(0x9aa0aa); mt.roughness = 0.52; mt.metalness = 0.55; }
+      if (mt.name === 'paint'){ mt.color.setHex(0x2b3038); mt.roughness = 0.44; }
+      if (mt.name === 'dish'){ mt.roughness = 0.78; mt.metalness = 0.30; }
+      if (mt.emissive && mt.emissive.getHex() !== 0) mt.emissiveIntensity = 1.4;
+      mt.needsUpdate = true;
     });
     while (vis.children.length) vis.remove(vis.children[0]);
     vis.add(m);
-    // the GLB carries its own wheels; spin them about the car's X axis
     CAR.wheels = [];
     CAR.wheelSpin = [];
     m.traverse(function(o){
       if (/^(tyre|hub|hub_cap)/.test(o.name)) CAR.wheelSpin.push({ o:o, q:o.quaternion.clone() });
     });
-  }, undefined, function(e){ console.warn('arrow glb failed, box car stays', e); });
+  }
+  new THREE.GLTFLoader().load('models/arrow_tripo.glb', fitArrow, undefined, function(){
+    new THREE.GLTFLoader().load('models/arrow_game.glb', fitArrow, undefined, function(e){
+      console.warn('no car model found, the box car stays', e);
+    });
+  });
 })();
 
 // four wheel samples: height, plus the pitch and roll that keeps the car on a slope
