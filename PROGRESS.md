@@ -168,8 +168,32 @@ car); GET IN appears only in range and enters; in the car the pad labels read
 DRIVE/BRAKE/GET OUT; a 110 px drag turns `CARCAM.yaw` by 0.572 rad; the
 handbrake flag reads false, true while held, false on release.
 
-Two testing traps worth keeping:
+## The handbrake did nothing
 
+Reported as "space does not seem to do handbrake". The key was wired correctly
+(`keys['Space']` true on keydown, false on keyup, and `TOUCH.hand` joins it),
+but the handbrake only reduced lateral grip. Driving straight there is no
+lateral velocity to preserve, so holding it changed exactly nothing.
+
+It now does three things, all of which you can feel:
+
+- cuts the power, so holding throttle and handbrake together goes nowhere
+- locks the rear wheels and scrubs speed at `CARTUNE.handDecel` 9 m/s^2
+- keeps the grip loss, so the tail still steps out if you steer
+
+The rears also stop spinning while the fronts keep rolling (`CAR.spin` for the
+front pair, `CAR.spinLock` for the rear), and the HUD reads `· HANDBRAKE` while
+it is held, so there is no guessing whether it registered.
+
+Measured: from 52.4 km/h, half a second of handbrake drops it to 26.5, a full
+second to 5.6. Throttle and handbrake together settle at 0. Front wheel spin
+-64.36 rad against rear -43.29, so the lock is real and not cosmetic.
+
+The desktop legend is now mode aware: `W A S D` move, `SHIFT` run, `SPACE` jump,
+`E` get in, `R` reset on foot, and `W S` throttle, `A D` steer, `SPACE`
+handbrake, `E` get out while driving.
+
+Two testing traps worth keeping:
 - `requestAnimationFrame` does not fire in the headless harness, so anything the
   render loop draws cannot be tested there. `ui`, `useTouch`, `stick`, `carcam`
   and `jump` are exposed on `window.COURSE` for that reason.

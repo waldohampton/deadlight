@@ -430,13 +430,13 @@ var TANK = {x:-10.5, z:-12.0, r:3.2};
 var CAR = {
   pos: new THREE.Vector3(5.6, 0, 12.6),
   yaw: 0, vel: new THREE.Vector3(), vy: 0,
-  steer: 0, spin: 0, grounded: true,
+  steer: 0, spin: 0, spinLock: 0, grounded: true,
   pitch: 0, roll: 0, root: null, wheels: [], headlights: null
 };
 var CARTUNE = {
   accel: 10.5, brake: 20, reverseMax: 6.5, top: 17.5,
   drag: 0.50, rollRes: 2.0,
-  grip: 7.5, gripHand: 1.5,
+  grip: 7.5, gripHand: 1.5, handDecel: 9.0,
   steerMax: 0.60, steerRate: 3.6, steerBack: 6.0,
   wheelbase: 2.55, track: 1.56,
   radius: 0.95, halfLen: 1.15, height: 1.12
@@ -641,6 +641,7 @@ function stepCar(dt){
       steerIn -= Math.sign(STICK.x) * Math.min(1, (Math.abs(STICK.x) - 0.14) * 1.9);
   }
   var hand     = !!keys['Space'] || TOUCH.hand;
+  CAR.hand = hand;
 
   if (!CAR.grounded) throttle = Math.min(throttle, 0.25);
 
@@ -655,10 +656,18 @@ function stepCar(dt){
   var vF = CAR.vel.x*fx + CAR.vel.z*fz;
   var vR = CAR.vel.x*rx + CAR.vel.z*rz;
 
+  // a handbrake that only removes lateral grip is invisible: drive straight
+  // and it does nothing at all. This one cuts the power, locks the rear wheels
+  // so they scrub speed, and still lets the tail step out.
+  if (hand) throttle = 0;
   if (throttle) vF += CARTUNE.accel * dt;
   if (braking){
     if (vF > 0.3) vF -= CARTUNE.brake * dt;
     else vF = Math.max(-CARTUNE.reverseMax, vF - CARTUNE.reverseMax * 0.55 * dt);
+  }
+  if (hand){
+    var lock = CARTUNE.handDecel * dt;
+    if (Math.abs(vF) <= lock) vF = 0; else vF -= (vF > 0 ? 1 : -1) * lock;
   }
   if (!throttle && !braking){
     var rr2 = CARTUNE.rollRes * dt;
@@ -713,6 +722,9 @@ function stepCar(dt){
   // way whatever you did, which reads as reversing while you drive forward.
   var fwdSpd = -(CAR.vel.x * Math.sin(CAR.yaw) + CAR.vel.z * Math.cos(CAR.yaw));
   CAR.spin -= fwdSpd * dt / 0.355;
+  // the rear pair is locked while the handbrake is on, so they stop turning
+  // while the fronts keep rolling. That difference is what reads as a lock.
+  if (!CAR.hand) CAR.spinLock -= fwdSpd * dt / 0.355;
 }
 
 // anything solid at this hull point, at this height band
@@ -770,7 +782,7 @@ function animateCar(){
     for (var k=0;k<CAR.wheelNodes.length;k++){
       var wn = CAR.wheelNodes[k];
       wn.o.rotation.y = wn.front ? CAR.steer : 0;
-      wn.o.rotation.x = CAR.spin;
+      wn.o.rotation.x = wn.front ? CAR.spin : CAR.spinLock;
     }
   } else if (CAR.wheelSpin && CAR.wheelSpin.length){
     _spinQ.setFromAxisAngle(_axX, CAR.spin);
@@ -1432,6 +1444,11 @@ function refreshUI(){
   document.getElementById('btnAct').classList.toggle('on', t && live && (foot ? near : true));
   document.getElementById('btnAct').textContent = foot ? 'GET IN' : 'GET OUT';
   document.getElementById('keys').classList.toggle('on', !t && live);
+  // the legend says what the keys do in the mode you are in, not everything
+  // they could ever do
+  document.getElementById('keys').innerHTML = foot
+    ? '<b>W A S D</b> MOVE · <b>SHIFT</b> RUN · <b>SPACE</b> JUMP · <b>E</b> GET IN · <b>R</b> RESET'
+    : '<b>W S</b> THROTTLE · <b>A D</b> STEER · <b>SPACE</b> HANDBRAKE · <b>E</b> GET OUT · <b>R</b> RESET';
 }
 
 // ---------------------------------------------------------------- physics
@@ -1861,7 +1878,8 @@ function updateCar(dt){
   document.querySelector('#clock').innerHTML = G.time.toFixed(2) + '<small>RUN</small>';
   document.getElementById('best').innerHTML = bestNow() === null ? 'NO TIME SET' : 'BEST ' + bestNow().toFixed(2);
   var kmh = Math.hypot(CAR.vel.x, CAR.vel.z) * 3.6;
-  document.getElementById('spd').textContent = kmh.toFixed(0) + ' KM/H · CAR' + (CAR.grounded ? '' : ' · AIR');
+  document.getElementById('spd').textContent = kmh.toFixed(0) + ' KM/H · CAR' +
+    (CAR.grounded ? '' : ' · AIR') + (CAR.hand ? ' · HANDBRAKE' : '');
   if (G.msgT > 0){ G.msgT -= dt; document.getElementById('msg').textContent = G.msg; }
   else document.getElementById('msg').textContent = '';
 
