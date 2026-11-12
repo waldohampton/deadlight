@@ -603,7 +603,11 @@ function stepCar(dt){
   }
   CAR.pitch += (gr.pitch - CAR.pitch) * Math.min(1, dt * 8);
   CAR.roll  += (gr.roll  - CAR.roll ) * Math.min(1, dt * 8);
-  CAR.spin  += Math.hypot(CAR.vel.x, CAR.vel.z) * dt / 0.36;
+  // wheel roll: signed by how fast the car is actually moving along its own
+  // nose. Using the speed here (always positive) meant the wheels turned one
+  // way whatever you did, which reads as reversing while you drive forward.
+  var fwdSpd = -(CAR.vel.x * Math.sin(CAR.yaw) + CAR.vel.z * Math.cos(CAR.yaw));
+  CAR.spin -= fwdSpd * dt / 0.355;
 }
 
 // anything solid at this hull point, at this height band
