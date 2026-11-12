@@ -30,24 +30,44 @@
   #go{border:1px solid rgba(255,179,71,.5);background:none;color:#ffb347;font:inherit;
     font-size:11px;letter-spacing:4px;padding:14px 34px;cursor:pointer;}
   #go:hover{background:rgba(255,179,71,.08);}
-  #stick,#pad{position:fixed;width:116px;height:116px;border-radius:50%;
-    border:1px solid rgba(255,255,255,.22);display:none;
-    box-shadow:inset 0 0 26px rgba(0,0,0,.30);}
-  #stick{left:26px;bottom:40px;}
-  #pad{right:28px;bottom:156px;width:96px;height:96px;}
-  #stick.on,#pad.on{display:block;}
-  #stick.held,#pad.held{border-color:rgba(255,179,71,.60);background:rgba(255,179,71,.06);}
-  #stick::after,#pad::after{content:attr(data-label);position:absolute;left:0;right:0;
-    bottom:-17px;text-align:center;font:inherit;font-size:9px;letter-spacing:3px;
-    color:rgba(255,255,255,.45);pointer-events:none;}
-  #knob{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
-    border-radius:50%;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);}
-  #paddot{position:absolute;left:50%;top:50%;width:26px;height:26px;margin:-13px 0 0 -13px;
-    border-radius:50%;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);}
-  #jump{position:fixed;right:30px;bottom:44px;width:88px;height:88px;border-radius:50%;
-    border:1px solid rgba(255,179,71,.35);color:#ffb347;font:inherit;font-size:10px;letter-spacing:2px;
-    display:none;background:rgba(255,179,71,.06);}
-  #jump.on{display:block;}
+  /* Touch controls. Two thumb zones, nothing on double duty, and every target
+     well over the 48 px minimum. Targets sit above env(safe-area-inset-*) so a
+     phone with a home bar does not eat them. */
+  #stick,#ring{position:fixed;width:118px;height:118px;margin:-59px 0 0 -59px;
+    border-radius:50%;pointer-events:none;}
+  #stick{left:calc(24px + env(safe-area-inset-left,0px));
+    bottom:calc(30px + env(safe-area-inset-bottom,0px));top:auto;margin:0;
+    border:1px solid rgba(255,255,255,.20);display:none;
+    box-shadow:inset 0 0 30px rgba(0,0,0,.28);}
+  #stick.on{display:block;}
+  #knob{position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px 0 0 -24px;
+    border-radius:50%;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.24);}
+  #ring{display:none;border:1px solid rgba(255,179,71,.75);background:rgba(255,179,71,.07);}
+  #ring.on{display:block;}
+  #stick::after{content:attr(data-label);position:absolute;left:0;right:0;bottom:-16px;
+    text-align:center;font:inherit;font-size:9px;letter-spacing:3px;color:rgba(255,255,255,.42);}
+  #lookhint{position:fixed;right:calc(28px + env(safe-area-inset-right,0px));
+    bottom:calc(272px + env(safe-area-inset-bottom,0px));width:92px;height:92px;border-radius:50%;
+    border:1px dashed rgba(255,255,255,.16);display:none;pointer-events:none;}
+  #lookhint.on{display:block;}
+  #lookhint::after{content:attr(data-label);position:absolute;left:0;right:0;bottom:-16px;
+    text-align:center;font:inherit;font-size:9px;letter-spacing:3px;color:rgba(255,255,255,.38);}
+  #btnJump,#btnAct{position:fixed;border-radius:50%;font:inherit;font-size:11px;letter-spacing:2px;
+    color:#ffd7a0;background:rgba(12,10,8,.42);border:1px solid rgba(255,179,71,.55);display:none;
+    -webkit-tap-highlight-color:transparent;touch-action:none;user-select:none;cursor:pointer;}
+  #btnJump{right:calc(30px + env(safe-area-inset-right,0px));
+    bottom:calc(34px + env(safe-area-inset-bottom,0px));width:100px;height:100px;}
+  #btnAct{right:calc(34px + env(safe-area-inset-right,0px));
+    bottom:calc(156px + env(safe-area-inset-bottom,0px));width:92px;height:92px;
+    border-color:rgba(255,255,255,.42);color:#eef2f6;background:rgba(18,22,26,.55);}
+  #btnJump.on,#btnAct.on{display:block;}
+  #btnJump.act,#btnAct.act{background:rgba(255,179,71,.24);}
+  #keys{position:absolute;left:50%;transform:translateX(-50%);
+    bottom:14px;padding:6px 13px;border-radius:3px;background:rgba(8,8,10,.55);
+    font:inherit;font-size:12px;letter-spacing:1.3px;white-space:nowrap;
+    color:rgba(255,244,230,.90);display:none;}
+  #keys.on{display:block;}
+  #keys b{color:rgba(255,214,150,.78);font-weight:400;}
 </style>
 </head>
 <body>
@@ -60,11 +80,14 @@
   <div id="spd">0.0 M/S</div>
   <div id="best"></div>
   <div id="msg"></div>
+  <div id="keys"><b>W A S D</b> MOVE · <b>SHIFT</b> RUN · <b>SPACE</b> JUMP · <b>E</b> USE · <b>R</b> RESET</div>
 </div>
 
 <div id="stick" data-label="MOVE"><div id="knob"></div></div>
-<div id="pad" data-label="LOOK"><div id="paddot"></div></div>
-<button id="jump">JUMP</button>
+<div id="ring"></div>
+<div id="lookhint" data-label="LOOK"></div>
+<button id="btnJump">JUMP</button>
+<button id="btnAct">GET IN</button>
 
 <div id="screen">
   <h1>DEADLIGHT</h1>
@@ -87,6 +110,10 @@
 var canvas = document.getElementById('v');
 var renderer = new THREE.WebGLRenderer({canvas:canvas, antialias:true, powerPreference:'high-performance'});
 var IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+// which input the player is actually using. Touch pads and the keyboard legend
+// never both show. This starts false on purpose: plenty of desktops report
+// ontouchstart, so capability is not usage. The first real touch flips it.
+var TOUCH = { hand: false, using: false };
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, IS_TOUCH ? 1.5 : 2));
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.outputEncoding = THREE.LinearEncoding;
@@ -613,7 +640,7 @@ function stepCar(dt){
     if (Math.abs(STICK.x) > 0.14)
       steerIn -= Math.sign(STICK.x) * Math.min(1, (Math.abs(STICK.x) - 0.14) * 1.9);
   }
-  var hand     = !!keys['Space'];
+  var hand     = !!keys['Space'] || TOUCH.hand;
 
   if (!CAR.grounded) throttle = Math.min(throttle, 0.25);
 
@@ -765,8 +792,8 @@ function enterCar(){
   AV.root.visible = false;
   torch.visible = false;
   CARCAM.yaw = CAR.yaw; CARCAM.idle = 9;
-  G.msg = IS_TOUCH ? 'STICK UP TO DRIVE · SIDEWAYS TO STEER · DOWN TO BRAKE'
-                   : 'CALDER ARROW · W/S THROTTLE · A/D STEER · SPACE HANDBRAKE · E GET OUT';
+  // the touch pads are labelled, so no keyboard instructions there
+  G.msg = IS_TOUCH ? '' : 'CALDER ARROW · W/S THROTTLE · A/D STEER · SPACE HANDBRAKE · E GET OUT';
   G.msgT = 4.0;
 }
 
@@ -1236,6 +1263,7 @@ try { G.bestFoot = parseFloat(localStorage.getItem('dl_course_best')) || null;
       G.bestCar = parseFloat(localStorage.getItem('dl_course_best_car')) || null; } catch(e){}
 
 document.addEventListener('keydown', function(e){
+  useTouch(false);          // a key press means they are on a keyboard now
   if (e.code === 'Space'){ P.jumpBuffer = TUNE.buffer; e.preventDefault(); }
   if (e.code === 'KeyR' && G.mode !== 'title'){
     if (MODE === 'car') exitCar();
@@ -1294,14 +1322,20 @@ document.addEventListener('keydown', function(e){
 });
 
 canvas.addEventListener('touchstart', function(e){
+  useTouch(true);
   for (var i=0;i<e.changedTouches.length;i++){
     var t = e.changedTouches[i];
-    if (t.clientX < window.innerWidth*0.45 && !STICK.active){
+    if (t.clientX < window.innerWidth*0.5 && !STICK.active){
       STICK.active = true; STICK.id = t.identifier; STICK.cx = t.clientX; STICK.cy = t.clientY;
-      document.getElementById('stick').classList.add('held');
+      // the ring appears where the thumb landed, so the stick centre and the
+      // touch origin are the same point. Before, the input centred on the thumb
+      // but the circle stayed pinned bottom left, so they disagreed.
+      var rg = document.getElementById('ring');
+      rg.style.left = t.clientX + 'px';
+      rg.style.top  = t.clientY + 'px';
+      rg.classList.add('on');
     } else if (!LOOK.active){
       LOOK.active = true; LOOK.id = t.identifier; LOOK.lx = t.clientX; LOOK.ly = t.clientY;
-      document.getElementById('pad').classList.add('held');
     }
   }
   e.preventDefault();
@@ -1316,9 +1350,18 @@ canvas.addEventListener('touchmove', function(e){
       STICK.x = dx; STICK.y = dy;
       document.getElementById('knob').style.transform = 'translate(' + (dx*30) + 'px,' + (dy*30) + 'px)';
     } else if (t.identifier === LOOK.id){
-      CAM.yaw   -= (t.clientX - LOOK.lx) * 0.005;
-      CAM.pitch += (t.clientY - LOOK.ly) * 0.0038;
-      CAM.pitch = Math.max(-0.55, Math.min(0.95, CAM.pitch));
+      var ldx = t.clientX - LOOK.lx, ldy = t.clientY - LOOK.ly;
+      if (MODE === 'car'){
+        // the car has its own camera. This used to write to the walking camera,
+        // which is why dragging did nothing at all while driving.
+        CARCAM.yaw   -= ldx * 0.0052;
+        CARCAM.pitch  = Math.max(-0.08, Math.min(0.62, CARCAM.pitch + ldy * 0.0022));
+        CARCAM.idle = 0;
+      } else {
+        CAM.yaw   -= ldx * 0.005;
+        CAM.pitch  = Math.max(-0.55, Math.min(0.95, CAM.pitch + ldy * 0.0038));
+        CAM.idle = 0;
+      }
       LOOK.lx = t.clientX; LOOK.ly = t.clientY;
     }
   }
@@ -1330,34 +1373,65 @@ canvas.addEventListener('touchend', function(e){
     if (t.identifier === STICK.id){
       STICK.active = false; STICK.id = null; STICK.x = STICK.y = 0;
       document.getElementById('knob').style.transform = '';
-      document.getElementById('stick').classList.remove('held');
+      document.getElementById('ring').classList.remove('on');
     }
     if (t.identifier === LOOK.id){
       LOOK.active = false; LOOK.id = null;
-      document.getElementById('pad').classList.remove('held');
     }
   }
 }, {passive:false});
-// one touch button, three jobs: jump on foot, get in when you are close to the
-// car, get out once you are driving. Without this the car was keyboard only.
-document.getElementById('jump').addEventListener('touchstart', function(e){
-  e.preventDefault(); e.stopPropagation();
-  if (G.mode !== 'play') return;
-  // MODE is the foot/car switch. G.mode stays 'play' while driving, so testing
-  // G.mode here meant the get out branch could never fire.
-  if (MODE === 'car') exitCar();
-  else if (nearCar()) enterCar();
-  else P.jumpBuffer = TUNE.buffer;
-}, {passive:false});
-
-var ACT_LABEL = '';
-function actLabel(){
-  if (!IS_TOUCH) return;
-  var want = (MODE === 'car') ? 'GET OUT' : (nearCar() ? 'GET IN' : 'JUMP');
-  if (want !== ACT_LABEL){
-    ACT_LABEL = want;
-    document.getElementById('jump').textContent = want;
+// Two buttons, never one doing two jobs. Jump (or handbrake in the car) sits
+// under the right thumb; interact is a separate target above it that only
+// exists when there is something in reach. The research is blunt about this:
+// a button that jumps and interacts at once gets the wrong one under pressure,
+// which is exactly what the old single button did.
+function pressBtn(el, down, up){
+  el.addEventListener('touchstart', function(e){
+    e.preventDefault(); e.stopPropagation();
+    el.classList.add('act');
+    try { if (navigator.vibrate) navigator.vibrate(10); } catch(err){}
+    down();
+  }, {passive:false});
+  function release(e){
+    if (e){ e.preventDefault(); e.stopPropagation(); }
+    el.classList.remove('act');
+    if (up) up();
   }
+  el.addEventListener('touchend', release, {passive:false});
+  el.addEventListener('touchcancel', release, {passive:false});
+}
+pressBtn(document.getElementById('btnJump'),
+  function(){ if (MODE === 'car') TOUCH.hand = true; else P.jumpBuffer = TUNE.buffer; },
+  function(){ TOUCH.hand = false; });
+pressBtn(document.getElementById('btnAct'),
+  function(){ if (MODE === 'car') exitCar(); else if (nearCar()) enterCar(); });
+
+// any touch anywhere, including the title button, means touch is the input
+document.addEventListener('touchstart', function(){ useTouch(true); }, {passive:true, capture:true});
+
+// the input the player last used decides which control set is on screen
+function useTouch(on){
+  if (TOUCH.using === on) return;
+  TOUCH.using = on; UI_SIG = '';
+}
+var UI_SIG = '';
+function refreshUI(){
+  var foot = (MODE !== 'car');
+  var near = foot && nearCar();
+  var t = TOUCH.using;
+  var live = (G.mode === 'play');
+  var sig = [t, foot, near, live].join(',');
+  if (sig === UI_SIG) return;
+  UI_SIG = sig;
+  var stick = document.getElementById('stick');
+  stick.classList.toggle('on', t && live);
+  stick.setAttribute('data-label', foot ? 'MOVE' : 'DRIVE');
+  document.getElementById('lookhint').classList.toggle('on', t && live);
+  document.getElementById('btnJump').classList.toggle('on', t && live);
+  document.getElementById('btnJump').textContent = foot ? 'JUMP' : 'BRAKE';
+  document.getElementById('btnAct').classList.toggle('on', t && live && (foot ? near : true));
+  document.getElementById('btnAct').textContent = foot ? 'GET IN' : 'GET OUT';
+  document.getElementById('keys').classList.toggle('on', !t && live);
 }
 
 // ---------------------------------------------------------------- physics
@@ -1720,13 +1794,8 @@ function reset(full){
 function start(){
   document.getElementById('screen').style.display = 'none';
   document.getElementById('hud').classList.add('on');
-  if (IS_TOUCH){
-    document.getElementById('jump').classList.add('on');
-    // both pads are permanent on touch, so the controls are visible before you
-    // find them. They only brighten while you are actually using them.
-    document.getElementById('stick').classList.add('on');
-    document.getElementById('pad').classList.add('on');
-  }
+  UI_SIG = '';              // force the control UI to redraw for this mode
+  refreshUI();
   G.mode = 'play';
   G.running = false; G.time = 0; G.cp = 0;
   reset(true);
@@ -1769,7 +1838,7 @@ function bestNow(){ return MODE === 'car' ? G.bestCar : G.bestFoot; }
 var clock = new THREE.Clock();
 function frame(){
   var dt = Math.min(clock.getDelta(), 0.05);
-  actLabel();
+  refreshUI();
   if (G.mode === 'play' && !G.pause) update(dt);
   if (window.POST_ON === false){
     renderer.setRenderTarget(null);
@@ -1913,7 +1982,15 @@ window.COURSE = {
   CARTUNE: CARTUNE,
   // the touch button label is drawn by the render loop, which does not run in a
   // headless test browser, so expose it to be callable
-  actLabel: function(){ actLabel(); return document.getElementById('jump').textContent; },
+  ui: function(){
+    UI_SIG = ''; refreshUI();
+    var g = function(id){ return getComputedStyle(document.getElementById(id)).display; };
+    return { stick: g('stick') + '/' + document.getElementById('stick').getAttribute('data-label'),
+             jump: document.getElementById('btnJump').textContent + '/' + g('btnJump'),
+             act:  document.getElementById('btnAct').textContent + '/' + g('btnAct'),
+             look: g('lookhint'), keys: g('keys') };
+  },
+  useTouch: function(on){ useTouch(on); UI_SIG = ''; refreshUI(); return TOUCH.using; },
   stick: function(x, y, on){ STICK.active = !!on; STICK.x = x; STICK.y = y; return {x:STICK.x, y:STICK.y, on:STICK.active}; },
   surfaceAt: surfaceAt,
   boxes: function(){ return boxes.map(function(b){ return {name:b.name, x0:+b.x0.toFixed(2), x1:+b.x1.toFixed(2), z0:+b.z0.toFixed(2), z1:+b.z1.toFixed(2), y0:+b.y0.toFixed(2), y1:+b.y1.toFixed(2)}; }); },
@@ -1923,8 +2000,11 @@ window.COURSE = {
              kmh:+ (Math.hypot(CAR.vel.x, CAR.vel.z)*3.6).toFixed(1),
              pos:[+CAR.pos.x.toFixed(2), +CAR.pos.y.toFixed(2), +CAR.pos.z.toFixed(2)],
              pitch:+CAR.pitch.toFixed(3), roll:+CAR.roll.toFixed(3),
+             hand: (!!keys['Space'] || TOUCH.hand),
+             lat: +Math.abs(CAR.vel.x * Math.cos(CAR.yaw) - CAR.vel.z * Math.sin(CAR.yaw)).toFixed(2),
              hit: CAR.lastHit || '' };
   },
+  carcam: function(){ return { yaw:+CARCAM.yaw.toFixed(3), pitch:+CARCAM.pitch.toFixed(3) }; },
   enterCar: function(){ enterCar(); },
   exitCar: function(){ exitCar(); },
   carTo: function(x, z, yaw){ CAR.pos.set(x, 0.02, z); CAR.yaw = yaw || 0;

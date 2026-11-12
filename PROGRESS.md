@@ -111,29 +111,70 @@ Marker rings were unlit `0xffb038`, which sits above the bloom threshold and
 smeared across the frame. They are now low emissive paint: `0xd08a28` at 0.55.
 The two neon green pad glows went the same way.
 
-## Mobile controls
+## Controls, both inputs
 
-The car was keyboard only: touch had a stick for walking, a drag for looking and
-a jump button, and nothing mapped to `E`. You could not get in.
+Rebuilt after two bug reports: jump did nothing on a phone, and looking around
+did nothing while driving.
 
-- the round button is now one button with three jobs. `GET IN` when you are
-  within 3.6 m of the car, `GET OUT` while driving, `JUMP` otherwise
-- while driving, the stick is wheel and pedal: push up for throttle, pull down
-  to brake and then reverse, sideways to steer. The dead zone is 0.22 vertically
-  and 0.14 sideways so a resting thumb does not creep
+Two real bugs sat behind them.
 
-`G.mode` stays `play` while driving (`MODE` is the foot/car switch), so the
-button handler tests `MODE`. Testing `G.mode === 'car'` meant get out could
-never fire.
+1. **Look in the car wrote to the wrong camera.** The touch drag wrote
+   `CAM.yaw`, but the car camera reads `CARCAM.yaw`. It has to branch on `MODE`.
+2. **One button did three jobs.** It was JUMP, GET IN and GET OUT depending on
+   state. The research is explicit that this is the mistake: a control that
+   jumps and interacts at once gets the wrong one under pressure. Standing next
+   to the car, JUMP became "get in", which is exactly the report.
 
-Verified with touch emulation at 390x844 and real synthetic `TouchEvent`s: label
-`JUMP` far from the car, `GET IN` beside it, tap enters, `GET OUT` shows, tap
-exits. Stick up for 1.5 s takes the car 0 to 46.5 km/h over 10.8 m, up plus
-right turns it 153 degrees at 57.9 km/h, down brakes 57.9 to 6.3 in 1.25 s.
+### What the research says, and what got applied
 
-Gotcha for testing: `requestAnimationFrame` does not fire in the headless
-harness, so anything the render loop draws cannot be tested there. `actLabel`
-and `stick` are exposed on `window.COURSE` for that reason.
+- **Thumb zones.** Primary controls live where the thumbs rest, bottom corners.
+  Reading UI goes top. Applied: MOVE bottom left, JUMP bottom right, interact
+  directly above it. Nothing interactive in the top half.
+- **48 px minimum hit target**, larger for primary actions. Applied: 118 px
+  stick, 100 px jump, 92 px interact. All well over.
+- **No double-duty taps.** Separate targets with a gap so a miss lands on empty
+  space. Applied: interact is a different button, 22 px clear of jump, and it
+  only exists when there is something in reach.
+- **Dynamic stick centred on the thumb.** The input origin and the drawn circle
+  must be the same point, or the player's mental map drifts and the game "stops
+  responding". Applied: the amber ring appears where the thumb lands; the faint
+  corner circle is the resting hint.
+- **Detect the input in use, not the input the device has.** Plenty of desktops
+  report `ontouchstart`, so capability is not usage. Applied: `TOUCH.using`
+  starts false and flips on the first real touch; a keypress flips it back. Touch
+  pads and the keyboard legend never both show.
+- **Feedback where the action happens.** Applied: buttons darken and fill on
+  press, plus a 10 ms vibration where supported.
+- **Mobile-only UI must vanish on desktop.** Applied: all touch elements are
+  `display:none` until touch is actually used.
+
+### The layout
+
+On foot, touch: MOVE (left), LOOK (right, drag anywhere on that half), JUMP
+(bottom right), GET IN (above jump, only near the car).
+In the car, touch: DRIVE (left, up for throttle, down to brake then reverse,
+sideways to steer), BRAKE (holds the handbrake, `TOUCH.hand` joins the spacebar),
+GET OUT, LOOK (drags `CARCAM`).
+Desktop: no touch UI, a legend pill bottom centre, `W A S D` move, `SHIFT` run,
+`SPACE` jump or handbrake, `E` get in or out, `R` reset. Every target sits above
+`env(safe-area-inset-*)`.
+
+### Verified, not assumed
+
+Desktop: jump lifts to y 0.87, `E` enters, `W` reaches 42.9 km/h, `E` exits.
+Mobile at 390x844 with real synthetic `TouchEvent`s: legend shows before any
+touch and switches to pads on the first one; JUMP lifts to y 0.53 (not into the
+car); GET IN appears only in range and enters; in the car the pad labels read
+DRIVE/BRAKE/GET OUT; a 110 px drag turns `CARCAM.yaw` by 0.572 rad; the
+handbrake flag reads false, true while held, false on release.
+
+Two testing traps worth keeping:
+
+- `requestAnimationFrame` does not fire in the headless harness, so anything the
+  render loop draws cannot be tested there. `ui`, `useTouch`, `stick`, `carcam`
+  and `jump` are exposed on `window.COURSE` for that reason.
+- `TOUCH.using` follows real touches, so in a headless test the keyboard legend
+  may be hidden. `COURSE.useTouch(false)` forces the keyboard state.
 
 Verified with the sim driver: the ramp run reaches the deck at 4.26 on all five
 starting points and carries on at 58 km/h; the rail stops the car at z 0.20;
