@@ -200,8 +200,10 @@ var sun = new THREE.DirectionalLight(0xffa858, 0.88);
 sun.position.copy(SUN_DIR).multiplyScalar(150);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -55; sun.shadow.camera.right = 55;
-sun.shadow.camera.top = 55; sun.shadow.camera.bottom = -55;
+// tighter box on the same 2k map: twice the texel density for no extra cost,
+// so the contact shadow under the car lands where it should
+sun.shadow.camera.left = -34; sun.shadow.camera.right = 34;
+sun.shadow.camera.top = 34; sun.shadow.camera.bottom = -34;
 sun.shadow.camera.near = 1; sun.shadow.camera.far = 320;
 sun.shadow.bias = -0.0008;
 sun.shadow.normalBias = 0.05;
@@ -854,9 +856,9 @@ var MODE = 'foot';
       if (!mt) return;
       if (mt.map){
         if (mt.name === 'tyre_tex'){         // rubber, not painted metal
-          mt.color.setHex(0xd0d0d0); mt.roughness = 0.86; mt.metalness = 0.0;
+          mt.color.setHex(0x8e8e8e); mt.roughness = 0.86; mt.metalness = 0.0;
         } else {
-          mt.color.setHex(0x9aa0aa); mt.roughness = 0.74; mt.metalness = 0.05;
+          mt.color.setHex(0x5a5f66); mt.roughness = 0.74; mt.metalness = 0.05;
         }
       }
       // The export carries a normal map and high frequency roughness detail,
@@ -872,7 +874,7 @@ var MODE = 'foot';
       if (mt.name === 'paint'){ mt.color.setHex(0x2b3038); mt.roughness = 0.62; mt.metalness = 0.05; }
       if (mt.name === 'dish'){ mt.roughness = 0.88; mt.metalness = 0.04; }
       if (mt.name === 'rim'){ mt.color.setHex(0x333a46); mt.roughness = 0.55; mt.metalness = 0.45; }
-      if (ENV && mt.isMeshStandardMaterial){ mt.envMap = ENV; mt.envMapIntensity = 0.85; }
+      if (ENV && mt.isMeshStandardMaterial){ mt.envMap = ENV; mt.envMapIntensity = 0.30; }
       mt.needsUpdate = true;
     });
     while (vis.children.length) vis.remove(vis.children[0]);
@@ -1266,6 +1268,13 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
       apronMat.color = new THREE.Color(0x93866f);
       apronMat.metalness = 0.0;
       apronMat.roughness = 1.0;
+      if (YTEX.asphalt_nrm){
+        var an = YTEX.asphalt_nrm.clone(); an.needsUpdate = true;
+        an.wrapS = an.wrapT = THREE.RepeatWrapping;
+        an.repeat.copy(ac.repeat);
+        apronMat.normalMap = an;
+        apronMat.normalScale.set(0.5, 0.5);
+      }
       apronMat.needsUpdate = true;
     }
 
@@ -1275,8 +1284,13 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
       TRACK_MATS.forEach(function(t){
         var col = YTEX.asphalt_col.clone(); col.needsUpdate = true; col.repeat.set(1, 1);
         var rgh = YTEX.asphalt_rgh.clone(); rgh.needsUpdate = true; rgh.repeat.set(1, 1);
+        var nrm = YTEX.asphalt_nrm ? YTEX.asphalt_nrm.clone() : null;
+        if (nrm){ nrm.needsUpdate = true; nrm.repeat.set(1, 1); }
         t.mat.map = col;
         t.mat.roughnessMap = rgh;
+        t.mat.normalMap = nrm;
+        t.mat.normalScale.set(t.kind === 'road' ? 0.85 : 0.6,
+                              t.kind === 'road' ? 0.85 : 0.6);
         t.mat.color = new THREE.Color(t.kind === 'road' ? 0x6e6e6a : 0xb08a5c);
         t.mat.metalness = 0.0;
         t.mat.roughness = 1.0;
@@ -1462,7 +1476,7 @@ function placeCamera(dt){
   }
 
   // the lens opens and the arm pays out a little at speed
-  var wantFov = 64 + Math.min(7, spd * 1.1);
+  var wantFov = 55 + Math.min(6, spd * 0.9);
   var wantDist = CAM.dist + Math.min(0.75, spd * 0.10);
 
   var cp = Math.cos(CAM.pitch), sp = Math.sin(CAM.pitch);
@@ -1491,7 +1505,7 @@ function placeCamera(dt){
 
 // chase camera for the car: sits behind the heading, pays out and opens the
 // lens with speed, and lets the mouse look around before it swings back
-var CARCAM = { yaw:0, dist:6.2, cur:6.2, pitch:0.22, idle:9 };
+var CARCAM = { yaw:0, dist:7.4, cur:7.4, pitch:0.22, idle:9 };
 
 function placeCarCamera(dt){
   var spd = Math.hypot(CAR.vel.x, CAR.vel.z);
@@ -1502,8 +1516,10 @@ function placeCarCamera(dt){
     CARCAM.yaw += dd * Math.min(1, dt * (2.2 + spd * 0.14));
   }
 
-  var wantDist = CARCAM.dist + Math.min(1.4, spd * 0.07);
-  var wantFov  = 58 + Math.min(13, spd * 0.75);
+  // longer lens, further back: the same car fills the frame but the
+  // perspective flattens, which is most of what makes a shot look photographed
+  var wantDist = CARCAM.dist + Math.min(1.8, spd * 0.09);
+  var wantFov  = 46 + Math.min(8, spd * 0.55);
 
   var cp = Math.cos(CARCAM.pitch), sp = Math.sin(CARCAM.pitch);
   var dir = new THREE.Vector3(Math.sin(CARCAM.yaw) * cp, sp, Math.cos(CARCAM.yaw) * cp);
