@@ -768,13 +768,22 @@ var MODE = 'foot';
         if (mt.name === 'tyre_tex'){         // rubber, not painted metal
           mt.color.setHex(0xd0d0d0); mt.roughness = 0.86; mt.metalness = 0.0;
         } else {
-          mt.color.setHex(0x9aa0aa); mt.roughness = 0.52; mt.metalness = 0.55;
+          mt.color.setHex(0x9aa0aa); mt.roughness = 0.74; mt.metalness = 0.05;
         }
       }
-      if (mt.name === 'paint'){ mt.color.setHex(0x2b3038); mt.roughness = 0.44; }
-      if (mt.name === 'dish'){ mt.roughness = 0.78; mt.metalness = 0.30; }
-      if (mt.name === 'rim'){ mt.color.setHex(0x333a46); mt.roughness = 0.40; mt.metalness = 0.80; }
-      if (mt.emissive && mt.emissive.getHex() !== 0) mt.emissiveIntensity = 1.4;
+      // The export carries a normal map and high frequency roughness detail,
+      // and something in it is emissive. On a black car under a low sun that
+      // combination is glitter: bright specks all over the paint and the dish.
+      // Flat surfaces and no self illumination, so the shape does the talking.
+      mt.normalMap = null;
+      mt.roughnessMap = null;
+      mt.metalnessMap = null;
+      mt.aoMapIntensity = 1.0;
+      if (mt.emissive) mt.emissive.setHex(0x000000);
+      mt.emissiveIntensity = 0;
+      if (mt.name === 'paint'){ mt.color.setHex(0x2b3038); mt.roughness = 0.62; mt.metalness = 0.05; }
+      if (mt.name === 'dish'){ mt.roughness = 0.88; mt.metalness = 0.04; }
+      if (mt.name === 'rim'){ mt.color.setHex(0x333a46); mt.roughness = 0.55; mt.metalness = 0.45; }
       mt.needsUpdate = true;
     });
     while (vis.children.length) vis.remove(vis.children[0]);
@@ -1841,14 +1850,14 @@ var POST = (function(){
   var vert = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
 
   var brightMat = new THREE.ShaderMaterial({
-    uniforms: { tDiffuse:{value:null}, threshold:{value:0.85} },
+    uniforms: { tDiffuse:{value:null}, threshold:{value:1.70} },
     vertexShader: vert,
     fragmentShader: [
       'uniform sampler2D tDiffuse; uniform float threshold; varying vec2 vUv;',
       'void main(){',
       '  vec3 c = texture2D(tDiffuse, vUv).rgb;',
       '  float l = dot(c, vec3(0.2126,0.7152,0.0722));',
-      '  float k = smoothstep(threshold, threshold*1.9 + 0.001, l);',
+      '  float k = smoothstep(threshold, threshold*1.45 + 0.001, l);',
       '  gl_FragColor = vec4(c * k, 1.0);',
       '}'
     ].join('\n')
@@ -1861,10 +1870,10 @@ var POST = (function(){
       'uniform sampler2D tDiffuse; uniform vec2 dir; varying vec2 vUv;',
       'void main(){',
       '  vec3 s = texture2D(tDiffuse, vUv).rgb * 0.227027;',
-      '  s += texture2D(tDiffuse, vUv + dir*1.3846).rgb * 0.316216;',
-      '  s += texture2D(tDiffuse, vUv - dir*1.3846).rgb * 0.316216;',
-      '  s += texture2D(tDiffuse, vUv + dir*3.2308).rgb * 0.070270;',
-      '  s += texture2D(tDiffuse, vUv - dir*3.2308).rgb * 0.070270;',
+      '  s += texture2D(tDiffuse, vUv + dir*2.6).rgb * 0.316216;',
+      '  s += texture2D(tDiffuse, vUv - dir*2.6).rgb * 0.316216;',
+      '  s += texture2D(tDiffuse, vUv + dir*6.1).rgb * 0.070270;',
+      '  s += texture2D(tDiffuse, vUv - dir*6.1).rgb * 0.070270;',
       '  gl_FragColor = vec4(s, 1.0);',
       '}'
     ].join('\n')
@@ -1875,7 +1884,7 @@ var POST = (function(){
       tDiffuse:{value:null}, tBloom:{value:null},
       tDepth:{value:null}, uRes:{value:new THREE.Vector2(1,1)},
       uAO:{value:0.90}, uNear:{value:0.05}, uFar:{value:300}, uProj:{value:800},
-      uTime:{value:0}, uBloom:{value:1.15}, uExposure:{value:1.04},
+      uTime:{value:0}, uBloom:{value:0.55}, uExposure:{value:1.04},
       uGrain:{value:0.009}, uVig:{value:0.45}, uCA:{value:0.0022}
     },
     vertexShader: vert,
