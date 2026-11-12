@@ -305,12 +305,16 @@ var MODE = 'foot';
 
   var g = new THREE.Group();
   g.rotation.order = 'YXZ';
+  // vis holds the body. The boxes below are a fallback until the Blender model
+  // loads, then they are thrown away and the GLB takes their place.
+  var vis = new THREE.Group();
+  g.add(vis);
 
   function part(geo, mat, x, y, z){
     var m = new THREE.Mesh(geo, mat);
     m.position.set(x, y, z);
     m.castShadow = true;
-    g.add(m);
+    vis.add(m);
     return m;
   }
   var B = function(w,h,d){ return new THREE.BoxGeometry(w,h,d); };
@@ -338,9 +342,29 @@ var MODE = 'foot';
   var beam = new THREE.SpotLight(0xffe9c4, 7.0, 60, 0.72, 0.60, 0.85);
   beam.position.set(0, 0.70, -1.90);
   beam.target.position.set(0, 0.10, -20);
-  beam.castShadow = false;
+  beam.castShadow = true;
+  beam.shadow.mapSize.set(512, 512);
+  beam.shadow.bias = -0.0012;
   g.add(beam); g.add(beam.target);
   CAR.headlights = beam;
+
+  // a cool fill that travels with the car. Without it the body is a silhouette
+  // against the yard and nothing about the shape reads at night.
+  var chaseFill = new THREE.PointLight(0xaec6e8, 1.7, 12, 2);
+  chaseFill.position.set(0, 1.35, 5.6);
+  g.add(chaseFill);
+
+  // a soft blob under the car: the beam points forward, so without this the
+  // car reads as hovering
+  var blobMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false,
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: 'varying vec2 vUv; void main(){ float d = length(vUv - 0.5) * 2.0; float a = smoothstep(1.0, 0.2, d) * 0.6; gl_FragColor = vec4(0.0, 0.0, 0.0, a); }'
+  });
+  var blob = new THREE.Mesh(new THREE.CircleGeometry(2.55, 24), blobMat);
+  blob.rotation.x = -Math.PI/2;
+  blob.position.y = 0.035;
+  g.add(blob);
 
   var tailGlow = new THREE.PointLight(0xff2a10, 0.28, 5, 2);
   tailGlow.position.set(0, 0.62, 2.48);
@@ -353,7 +377,7 @@ var MODE = 'foot';
       w.rotation.z = Math.PI/2;
       w.position.set(sx * 0.90, 0.36, sz * 1.42);
       w.castShadow = true;
-      g.add(w);
+      vis.add(w);
       CAR.wheels.push(w);
     }
   }
@@ -371,6 +395,28 @@ var MODE = 'foot';
   g.position.copy(CAR.pos);
   scene.add(g);
   CAR.root = g;
+  CAR.vis = vis;
+
+  // the modelled body. If it never loads the box car above keeps driving.
+  new THREE.GLTFLoader().load('models/arrow_game.glb', function(gltf){
+    var m = gltf.scene;
+    m.traverse(function(o){
+      if (!o.isMesh) return;
+      o.castShadow = true; o.receiveShadow = false;
+      var mt = o.material;
+      if (mt && mt.name === 'paint'){ mt.color.setHex(0x2b3038); mt.roughness = 0.44; mt.needsUpdate = true; }
+      if (mt && mt.name === 'dish'){ mt.roughness = 0.78; mt.metalness = 0.30; mt.needsUpdate = true; }
+      if (mt && mt.emissive && mt.emissive.getHex() !== 0) mt.emissiveIntensity = 1.4;
+    });
+    while (vis.children.length) vis.remove(vis.children[0]);
+    vis.add(m);
+    // the GLB carries its own wheels; spin them about the car's X axis
+    CAR.wheels = [];
+    CAR.wheelSpin = [];
+    m.traverse(function(o){
+      if (/^(tyre|hub|hub_cap)/.test(o.name)) CAR.wheelSpin.push({ o:o, q:o.quaternion.clone() });
+    });
+  }, undefined, function(e){ console.warn('arrow glb failed, box car stays', e); });
 })();
 
 // four wheel samples: height, plus the pitch and roll that keeps the car on a slope
@@ -503,13 +549,24 @@ function carHitAt(x, z){
 }
 
 
+var _spinQ = new THREE.Quaternion();
+var _axX = new THREE.Vector3(1, 0, 0);
+
 function animateCar(){
   var g = CAR.root;
   g.position.copy(CAR.pos);
   g.rotation.y = CAR.yaw;
   g.rotation.x = CAR.pitch;
   g.rotation.z = CAR.roll;
-  for (var i=0;i<CAR.wheels.length;i++) CAR.wheels[i].rotation.x = CAR.spin;
+  if (CAR.wheelSpin && CAR.wheelSpin.length){
+    _spinQ.setFromAxisAngle(_axX, CAR.spin);
+    for (var k=0;k<CAR.wheelSpin.length;k++){
+      var ws = CAR.wheelSpin[k];
+      ws.o.quaternion.copy(_spinQ).multiply(ws.q);
+    }
+  } else {
+    for (var i=0;i<CAR.wheels.length;i++) CAR.wheels[i].rotation.x = CAR.spin;
+  }
 }
 
 function nearCar(){
