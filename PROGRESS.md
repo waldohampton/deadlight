@@ -68,8 +68,48 @@ Measured on the same camera, mean of the frame: night was RGB 67/71/73 (cool,
 luma against 74. Warmth went from minus 6 to plus 34.
 
 Known mismatch: the baked shadows are night shadows, so they do not agree with
-the new sun direction. Re-baking `bake_night.py` with a low warm sun is the
-proper fix and has not been done.
+the new sun direction. That stopped mattering when the bake came out entirely
+(see below).
+
+## Photo surfaces, and the bake gone
+
+The yard had 42 meshes, 7 materials and **no albedo texture at all**. Every
+surface was a flat colour with a baked lightmap on it, which is why it read as
+a render: there was no photograph anywhere in the scene.
+
+The bake is gone. `bakenight/<mesh>_lm.png` is no longer loaded, the emissive
+bake is stripped from every material except `lamp` and `beacon`, and the yard
+now casts shadows (`castShadow` true) so the sun makes the long shadows the
+concept art has. The 4.7 MB of lightmap PNGs are still on disk and still in
+git, just unused.
+
+Three CC0 photo sets from Poly Haven, downloaded by `fetch_tex.py` at 1 k and
+packed to 1024 px JPEG: asphalt, brushed concrete, rusty metal, colour, normal
+and roughness each, **1.8 MB for all nine files**.
+
+- the floor is one 70 m plane unwrapped 0..1, so it tiles at 2 m per repeat and
+  keeps a real normal map
+- everything else uses **world space triplanar** injected through
+  `onBeforeCompile`, because the yard's other UVs are useless: a 26 m concrete
+  cube has a u range of 0.001 to 0.101. Triplanar means texel density is the
+  same on a wall, a pipe and the floor without touching a single UV
+- our own pads and ramps get the concrete scan too, otherwise they read as
+  flat grey slabs next to the yard
+
+Two things the bake had been doing for free, and had to be replaced:
+
+1. **Contact shading.** Without it every wheel and foot floated. There is now a
+   ten tap screen space occlusion term in the composite shader, using a 24-bit
+   depth texture on the scene target, with the radius in real metres
+   (`uProj` converts 52 cm of world to pixels at any field of view).
+2. **A horizon.** The baked floor is 70 m square, so the world ended on a
+   straight line. There is a 240 m ground disc under it and the fog colour now
+   matches the sky horizon (`0xa8643e` at 0.0105), so the two meet in haze
+   instead of at an edge.
+
+Marker rings were unlit `0xffb038`, which sits above the bloom threshold and
+smeared across the frame. They are now low emissive paint: `0xd08a28` at 0.55.
+The two neon green pad glows went the same way.
 
 Verified with the sim driver: the ramp run reaches the deck at 4.26 on all five
 starting points and carries on at 58 km/h; the rail stops the car at z 0.20;

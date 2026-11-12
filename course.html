@@ -86,7 +86,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 var scene = new THREE.Scene();
 scene.background = new THREE.Color(0x1a1520);
-scene.fog = new THREE.FogExp2(0x6e4638, 0.0085);
+scene.fog = new THREE.FogExp2(0xa8643e, 0.0105);
 
 var camera = new THREE.PerspectiveCamera(64, window.innerWidth/window.innerHeight, 0.05, 300);
 camera.rotation.order = 'YXZ';
@@ -147,6 +147,16 @@ scene.add(sun); scene.add(sun.target);
 var camFill = new THREE.PointLight(0xe0b795, 0.40, 9, 2);
 camFill.position.set(0, 0.2, 0.6);
 camera.add(camFill);
+
+// open ground past the yard boundary. The baked floor is 70 m square, so
+// without this the world ends on a straight line. Fog swallows the edge of
+// this 240 m disc long before you can reach it.
+var apronMat = new THREE.MeshStandardMaterial({color:0x7d7368, roughness:0.97, metalness:0.0});
+var apron = new THREE.Mesh(new THREE.CircleGeometry(240, 48), apronMat);
+apron.rotation.x = -Math.PI / 2;
+apron.position.y = -0.05;
+apron.receiveShadow = true;
+scene.add(apron);
 
 // ---------------------------------------------------------------- course geometry
 // a box is a solid you can stand on: x/z centre, half extents, top height, depth
@@ -318,7 +328,8 @@ post(-13.9, -16.60, 0, 6.75);
 var FINISH = {x:-10.5, y:6.99, z:-12.0};
 (function(){
   var lamp = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 10),
-                            new THREE.MeshBasicMaterial({color:0x9dffbe}));
+                            new THREE.MeshStandardMaterial({color:0x3a2a10, emissive:0xd08a28,
+                                                           emissiveIntensity:0.55, roughness:0.55, metalness:0.1}));
   lamp.position.set(-10.5, 7.85, -12.0); scene.add(lamp);
   var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.85, 8), STEP_MAT);
   pole.position.set(-10.5, 7.42, -12.0); scene.add(pole);
@@ -356,7 +367,11 @@ function finishPoint(){ return MODE === 'car' ? FINISH_CAR : FINISH; }
 
 // the car markers need to be seen at 60 km/h, so they get a lit ring
 (function(){
-  var ringMat = new THREE.MeshBasicMaterial({color:0xffb038});
+  // painted, not glowing: an unlit 0xffb038 ring sits above the bloom threshold
+  // and smears across the frame at sunset. This is bright enough to find and
+  // dim enough to stay a marking on the floor.
+  var ringMat = new THREE.MeshStandardMaterial({color:0x3a2a10, emissive:0xd08a28,
+                                                emissiveIntensity:0.55, roughness:0.55, metalness:0.1});
   CP_CAR.slice(1).concat([FINISH_CAR]).forEach(function(c){
     var r = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.06, 6, 30), ringMat);
     r.rotation.x = -Math.PI/2;
@@ -754,12 +769,16 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
   gltf.scene.traverse(function(o){
     if (!o.isMesh) return;
     meshes.push(o);
-    o.castShadow = false; o.receiveShadow = true;
+    o.castShadow = true; o.receiveShadow = true;
     if (o.geometry.attributes.uv && !o.geometry.attributes.uv2)
       o.geometry.setAttribute('uv2', o.geometry.attributes.uv);
     var m = o.material;
-    if (m && m.emissive && (m.emissiveMap || m.emissive.getHex() !== 0))
-      m.emissiveIntensity = m.emissiveMap ? 2.2 : 6.0;
+    // the bake is gone: these surfaces are lit by the sun and the sky now, so
+    // the only things allowed to emit are the actual fixtures
+    if (m && m.emissive){
+      if (/^(lamp|beacon)$/.test(m.name || '')) m.emissiveIntensity = m.emissiveMap ? 2.2 : 6.0;
+      else { m.emissiveMap = null; m.emissive = new THREE.Color(0x000000); m.emissiveIntensity = 0; }
+    }
 
     // anything taller than a kerb becomes a car collider, so the car stops at
     // the sheds and posts instead of driving out through the side of the yard.
@@ -780,18 +799,113 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
                      y0:Math.max(bb.min.y, 0), y1:bb.max.y, name:o.name || '' });
   });
   if (window.COURSE) window.COURSE.wallCount = wallBoxes.length;
-  var pending = meshes.length;
-  function done(){ if (--pending === 0) window.YARD_READY = true; }
-  meshes.forEach(function(m){
-    new THREE.TextureLoader().load('bakenight/' + m.name + '_lm.png', function(t){
-      t.encoding = THREE.sRGBEncoding;
+
+  // ------------------------------------------------------------ photo surfaces
+  // Every yard material was a flat colour with a baked lightmap on it, which is
+  // exactly why it read as a render: there was no photograph anywhere in the
+  // scene. These are CC0 photo scans from Poly Haven, 1 k, 1.8 MB for all three
+  // sets, and they replace the bake as the thing that carries the detail.
+  var YTEX = {};
+  var TEX_FILES = ['asphalt_col','asphalt_nrm','asphalt_rgh',
+                   'concrete_col','concrete_nrm','concrete_rgh',
+                   'metal_col','metal_nrm','metal_rgh'];
+  var texLeft = TEX_FILES.length;
+  TEX_FILES.forEach(function(f){
+    new THREE.TextureLoader().load('models/tex/' + f + '.jpg', function(t){
+      t.encoding = /_col$/.test(f) ? THREE.sRGBEncoding : THREE.LinearEncoding;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
       t.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      m.material.lightMap = t;
-      m.material.lightMapIntensity = 0.85;   // the night bake is ambient now, the sun is the light
-      m.material.needsUpdate = true;
-      done();
-    }, undefined, done);
+      YTEX[f] = t;
+      if (--texLeft === 0) applyYardTextures();
+    }, undefined, function(e){
+      console.warn('texture failed', f, e);
+      if (--texLeft === 0) applyYardTextures();
+    });
   });
+
+  // world space triplanar, so the texel density is the same on a 70 m floor, a
+  // 26 m concrete wall and a 34 m pipe without touching a single UV
+  function triplanar(mat, col, rgh, scale, metal){
+    if (mat.userData && mat.userData.tripl) return;
+    mat.userData.tripl = true;
+    mat.map = col;
+    mat.roughnessMap = rgh;
+    mat.color = new THREE.Color(0xffffff);
+    mat.metalness = metal;
+    mat.roughness = 1.0;
+    mat.needsUpdate = true;
+    mat.onBeforeCompile = function(sh){
+      sh.uniforms.uTriScale = { value: scale };
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vTriPos;\nvarying vec3 vTriNrm;')
+        .replace('#include <project_vertex>',
+          '#include <project_vertex>\n  vTriPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\n  vTriNrm = normalize(mat3(modelMatrix) * objectNormal);');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>',
+          '#include <common>\nvarying vec3 vTriPos;\nvarying vec3 vTriNrm;\nuniform float uTriScale;\nvec3 triW;')
+        .replace('#include <clipping_planes_fragment>',
+          '#include <clipping_planes_fragment>\n  { vec3 tw = pow(abs(normalize(vTriNrm)), vec3(6.0)); triW = tw / max(1e-4, tw.x + tw.y + tw.z); }')
+        .replace(/texture2D\(\s*map\s*,\s*vUv\s*\)/,
+          '( texture2D( map, vTriPos.zy * uTriScale ) * triW.x + texture2D( map, vTriPos.xz * uTriScale ) * triW.y + texture2D( map, vTriPos.xy * uTriScale ) * triW.z )')
+        .replace(/texture2D\(\s*roughnessMap\s*,\s*vUv\s*\)/,
+          '( texture2D( roughnessMap, vTriPos.zy * uTriScale ) * triW.x + texture2D( roughnessMap, vTriPos.xz * uTriScale ) * triW.y + texture2D( roughnessMap, vTriPos.xy * uTriScale ) * triW.z )');
+      if (sh.fragmentShader.indexOf('vTriPos.zy') === -1)
+        console.warn('triplanar did not patch map_fragment on', mat.name);
+    };
+  }
+
+  function applyYardTextures(){
+    meshes.forEach(function(o){
+      var m = o.material;
+      if (!m) return;
+      var nm = m.name || '';
+      if (nm === 'lamp' || nm === 'beacon') return;
+      if (nm === 'wet_asphalt'){
+        // the floor is a single 70 m plane unwrapped 0..1, so plain UVs tile
+        // cleanly at 2 m per tile and it can keep a real normal map
+        [YTEX.asphalt_col, YTEX.asphalt_nrm, YTEX.asphalt_rgh].forEach(function(t){
+          if (t) t.repeat.set(35, 35);
+        });
+        m.map = YTEX.asphalt_col;
+        m.normalMap = YTEX.asphalt_nrm;
+        m.roughnessMap = YTEX.asphalt_rgh;
+        m.normalScale = new THREE.Vector2(1.1, 1.1);
+        m.color = new THREE.Color(0xffffff);
+        m.metalness = 0.0;
+        m.roughness = 1.0;
+        m.needsUpdate = true;
+      } else if (nm === 'concrete' || nm === 'facade'){
+        triplanar(m, YTEX.concrete_col, YTEX.concrete_rgh, 0.34, 0.0);
+      } else if (nm === 'dark_metal'){
+        triplanar(m, YTEX.metal_col, YTEX.metal_rgh, 0.50, 0.55);
+      } else if (nm === 'yellow_paint'){
+        m.color = new THREE.Color(0xc8a23a);
+        m.metalness = 0.1; m.roughness = 0.62;
+        m.needsUpdate = true;
+      }
+    });
+    // the pads, ramps and steps are our own geometry, so they get the concrete
+    // scan as well. Without this they read as flat grey slabs next to the yard.
+    [STEP_MAT, PANEL_MAT].forEach(function(mm){
+      if (mm) triplanar(mm, YTEX.concrete_col, YTEX.concrete_rgh, 0.34, 0.0);
+    });
+
+    // the open ground gets its own copies of the asphalt so it can tile coarse
+    // over 480 m while the yard floor tiles at 2 m
+    if (apronMat && YTEX.asphalt_col){
+      var ac = YTEX.asphalt_col.clone(); ac.needsUpdate = true; ac.repeat.set(120, 120);
+      var ar = YTEX.asphalt_rgh.clone(); ar.needsUpdate = true; ar.repeat.set(120, 120);
+      apronMat.map = ac;
+      apronMat.roughnessMap = ar;
+      apronMat.color = new THREE.Color(0x93866f);
+      apronMat.metalness = 0.0;
+      apronMat.roughness = 1.0;
+      apronMat.needsUpdate = true;
+    }
+
+    window.YARD_TEX = YTEX;
+    window.YARD_READY = true;
+  }
 }, undefined, function(e){ console.error('glb', e); });
 
 
@@ -1402,14 +1516,21 @@ var POST = (function(){
   var compMat = new THREE.ShaderMaterial({
     uniforms: {
       tDiffuse:{value:null}, tBloom:{value:null},
+      tDepth:{value:null}, uRes:{value:new THREE.Vector2(1,1)},
+      uAO:{value:0.90}, uNear:{value:0.05}, uFar:{value:300}, uProj:{value:800},
       uTime:{value:0}, uBloom:{value:1.15}, uExposure:{value:1.04},
       uGrain:{value:0.009}, uVig:{value:0.45}, uCA:{value:0.0022}
     },
     vertexShader: vert,
     fragmentShader: [
       'uniform sampler2D tDiffuse; uniform sampler2D tBloom;',
+      'uniform sampler2D tDepth; uniform vec2 uRes;',
+      'uniform float uAO, uNear, uFar, uProj;',
       'uniform float uTime, uBloom, uExposure, uGrain, uVig, uCA;',
       'varying vec2 vUv;',
+      // linear view depth from the depth buffer, so occlusion is judged in
+      // metres instead of in the hyperbolic depth that WebGL stores
+      'float vz(vec2 q){ float dd = texture2D(tDepth, q).x * 2.0 - 1.0; return 2.0 * uNear * uFar / (uFar + uNear - dd * (uFar - uNear)); }',
       'vec3 aces(vec3 x){ return clamp((x*(2.51*x + 0.03)) / (x*(2.43*x + 0.59) + 0.14), 0.0, 1.0); }',
       'void main(){',
       '  vec2 uv = vUv;',
@@ -1419,6 +1540,20 @@ var POST = (function(){
       '  c.r = texture2D(tDiffuse, uv + d*uCA*r2*4.0).r;',
       '  c.g = texture2D(tDiffuse, uv).g;',
       '  c.b = texture2D(tDiffuse, uv - d*uCA*r2*4.0).b;',
+      // screen space occlusion. Without the bake there is nothing darkening the
+      // crease where a wheel meets the floor, and everything floats. Ten taps in
+      // a ring, rotated per pixel so the pattern does not band.
+      '  float z0 = vz(uv);',
+      '  float ang = fract(sin(dot(uv, vec2(41.7, 289.1)) * 43758.5453)) * 6.2831;',
+      '  float occ = 0.0;',
+      '  for (int i = 0; i < 10; i++){',
+      '    float a = ang + float(i) * 0.6283;',
+      '    float rad = (0.40 + 0.60 * fract(float(i) * 0.618 + 0.31)) * 0.52;',
+      '    vec2 o = vec2(cos(a), sin(a)) * rad * uProj / max(z0, 0.05);',
+      '    float dz = z0 - vz(uv + o / uRes);',
+      '    occ += clamp(1.0 - dz / 0.75, 0.0, 1.0) * step(0.02, dz);',
+      '  }',
+      '  c *= 1.0 - (occ / 10.0) * uAO;',
       '  c += texture2D(tBloom, uv).rgb * uBloom;',
       '  c *= uExposure;',
       '  c = aces(c);',
@@ -1451,6 +1586,14 @@ var POST = (function(){
     var w = Math.floor(W * pr), h = Math.floor(H * pr);
     if (rtScene) { rtScene.dispose(); rtA.dispose(); rtB.dispose(); }
     rtScene = makeRT(w, h, true);
+    // depth for the screen space occlusion. UnsignedShort would not resolve a
+    // 0.02 m difference at 30 m, so this is 24 bit.
+    var dt = new THREE.DepthTexture(Math.max(1, w), Math.max(1, h));
+    dt.type = THREE.UnsignedIntType;
+    dt.minFilter = THREE.NearestFilter; dt.magFilter = THREE.NearestFilter;
+    rtScene.depthTexture = dt;
+    compMat.uniforms.tDepth.value = dt;
+    compMat.uniforms.uRes.value.set(Math.max(1, w), Math.max(1, h));
     rtA = makeRT(Math.floor(w/4), Math.floor(h/4), true);
     rtB = makeRT(Math.floor(w/4), Math.floor(h/4), true);
     compMat.uniforms.uVig.value = 0.55;
@@ -1482,6 +1625,9 @@ var POST = (function(){
     compMat.uniforms.tDiffuse.value = rtScene.texture;
     compMat.uniforms.tBloom.value = rtA.texture;
     compMat.uniforms.uTime.value = t;
+    // pixels per metre at one metre of depth, so the occlusion radius is a real
+    // 52 cm of world no matter what the field of view is doing
+    compMat.uniforms.uProj.value = (rtScene.height * 0.5) / Math.tan(camera.fov * Math.PI / 360);
     quad.material = compMat;
     renderer.setRenderTarget(null);
     renderer.render(quadScene, quadCam);
