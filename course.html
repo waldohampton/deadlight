@@ -298,6 +298,8 @@ var MODE = 'foot';
   var lampMat = new THREE.MeshBasicMaterial({color:0xffd9a0});
   var tailMat = new THREE.MeshBasicMaterial({color:0xff3a1a});
   var rimMat  = new THREE.MeshStandardMaterial({color:0x33373d, roughness:0.45, metalness:0.80});
+  var cabinMat= new THREE.MeshStandardMaterial({color:0x3b4048, roughness:0.50, metalness:0.40});
+  var dishMat = new THREE.MeshStandardMaterial({color:0x767c85, roughness:0.38, metalness:0.85});
   var sillMat = new THREE.MeshStandardMaterial({color:0x8a6a1e, roughness:0.45, metalness:0.2,
                                                 emissive:0x6a4a08, emissiveIntensity:1.6});
 
@@ -317,7 +319,7 @@ var MODE = 'foot';
   part(B(1.86, 0.46, 3.30), bodyMat, 0, 0.60,  0.45);   // main body
   part(B(1.80, 0.30, 1.35), bodyMat, 0, 0.52, -1.60);   // nose
   part(B(1.70, 0.16, 0.90), bodyMat, 0, 0.77, -1.95);   // hood lip
-  part(B(1.62, 0.42, 1.55), trimMat, 0, 1.02,  0.10);   // cabin
+  part(B(1.62, 0.42, 1.55), cabinMat, 0, 1.02,  0.10);   // cabin
   part(B(1.50, 0.50, 0.07), glassMat, 0, 0.98, -0.70).rotation.x = -0.52;  // windshield
   part(B(1.46, 0.42, 0.07), glassMat, 0, 1.00,  0.92).rotation.x =  0.46;  // rear glass
   part(B(1.86, 0.22, 0.24), bodyMat, 0, 0.70,  2.14);   // tail panel
@@ -340,8 +342,8 @@ var MODE = 'foot';
   g.add(beam); g.add(beam.target);
   CAR.headlights = beam;
 
-  var tailGlow = new THREE.PointLight(0xff2a10, 0.55, 6, 2);
-  tailGlow.position.set(0, 0.70, 2.30);
+  var tailGlow = new THREE.PointLight(0xff2a10, 0.28, 5, 2);
+  tailGlow.position.set(0, 0.62, 2.48);
   g.add(tailGlow);
 
   // wheels
@@ -356,11 +358,15 @@ var MODE = 'foot';
     }
   }
 
-  // the dish, gimballed through the roof
-  part(new THREE.CylinderGeometry(0.05, 0.05, 0.62, 8), trimMat, 0, 1.47, 1.05);
-  var dish = part(new THREE.CylinderGeometry(0.62, 0.16, 0.24, 18), trimMat, 0, 1.80, 1.05);
-  dish.rotation.x = -0.85;
-  part(new THREE.SphereGeometry(0.07, 8, 6), EDGE_MAT, 0, 1.94, 0.72);
+  // the dish, gimballed through the roof: rim, concave face and a feed arm so it
+  // reads as a dish and not as a rear wing in silhouette
+  part(new THREE.CylinderGeometry(0.045, 0.045, 0.46, 8), trimMat, 0, 1.40, 1.05);
+  var dish = part(new THREE.CylinderGeometry(0.46, 0.13, 0.16, 20), dishMat, 0, 1.60, 1.05);
+  dish.rotation.x = -0.55;
+  var rim = part(new THREE.TorusGeometry(0.46, 0.022, 6, 24), trimMat, 0, 1.60, 1.05);
+  rim.rotation.x = -0.55 + Math.PI/2;
+  part(new THREE.SphereGeometry(0.055, 8, 6), sillMat, 0, 1.80, 0.86);
+  part(new THREE.CylinderGeometry(0.012, 0.012, 0.34, 6), trimMat, 0, 1.70, 0.95).rotation.x = -0.55;
 
   g.position.copy(CAR.pos);
   scene.add(g);
