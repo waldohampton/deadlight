@@ -462,7 +462,13 @@ var MODE = 'foot';
       o.castShadow = true; o.receiveShadow = false;
       var mt = o.material;
       if (!mt) return;
-      if (mt.map){ mt.color.setHex(0x9aa0aa); mt.roughness = 0.52; mt.metalness = 0.55; }
+      if (mt.map){
+        if (mt.name === 'tyre_tex'){         // rubber, not painted metal
+          mt.color.setHex(0xd0d0d0); mt.roughness = 0.86; mt.metalness = 0.0;
+        } else {
+          mt.color.setHex(0x9aa0aa); mt.roughness = 0.52; mt.metalness = 0.55;
+        }
+      }
       if (mt.name === 'paint'){ mt.color.setHex(0x2b3038); mt.roughness = 0.44; }
       if (mt.name === 'dish'){ mt.roughness = 0.78; mt.metalness = 0.30; }
       if (mt.name === 'rim'){ mt.color.setHex(0x333a46); mt.roughness = 0.40; mt.metalness = 0.80; }
@@ -476,8 +482,11 @@ var MODE = 'foot';
     CAR.wheelNodes = [];
     m.traverse(function(o){
       if (/^(tyre|hub|hub_cap)/.test(o.name)) CAR.wheelSpin.push({ o:o, q:o.quaternion.clone() });
-      // the fitted wheels: origin on the axle, so Y steers and X rolls
-      if (/^wheel_/.test(o.name)){
+      // the fitted wheels: origin on the axle, so Y steers and X rolls.
+      // Match the parent nodes only: the exporter splits each wheel into child
+      // meshes called wheel_FL_mesh etc, and rotating those too doubles the
+      // steer angle and the spin.
+      if (/^wheel_(FL|FR|RL|RR)$/.test(o.name)){
         o.rotation.order = 'YXZ';
         CAR.wheelNodes.push({ o:o, front: /^wheel_F/.test(o.name) });
       }
