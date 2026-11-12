@@ -807,6 +807,7 @@ function enterCar(){
   // the touch pads are labelled, so no keyboard instructions there
   G.msg = IS_TOUCH ? '' : 'CALDER ARROW · W/S THROTTLE · A/D STEER · SPACE HANDBRAKE · E GET OUT';
   G.msgT = 4.0;
+  UI_SIG = ''; refreshUI();
 }
 
 function exitCar(){
@@ -817,6 +818,8 @@ function exitCar(){
   AV.root.visible = true;
   torch.visible = true;
   AV.root.position.set(P.pos.x, P.pos.y, P.pos.z);
+  TOUCH.hand = false;           // never exit with the handbrake stuck on
+  UI_SIG = ''; refreshUI();
 }
 
 // ---------------------------------------------------------------- baked yard
