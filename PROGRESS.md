@@ -111,6 +111,30 @@ Marker rings were unlit `0xffb038`, which sits above the bloom threshold and
 smeared across the frame. They are now low emissive paint: `0xd08a28` at 0.55.
 The two neon green pad glows went the same way.
 
+## Mobile controls
+
+The car was keyboard only: touch had a stick for walking, a drag for looking and
+a jump button, and nothing mapped to `E`. You could not get in.
+
+- the round button is now one button with three jobs. `GET IN` when you are
+  within 3.6 m of the car, `GET OUT` while driving, `JUMP` otherwise
+- while driving, the stick is wheel and pedal: push up for throttle, pull down
+  to brake and then reverse, sideways to steer. The dead zone is 0.22 vertically
+  and 0.14 sideways so a resting thumb does not creep
+
+`G.mode` stays `play` while driving (`MODE` is the foot/car switch), so the
+button handler tests `MODE`. Testing `G.mode === 'car'` meant get out could
+never fire.
+
+Verified with touch emulation at 390x844 and real synthetic `TouchEvent`s: label
+`JUMP` far from the car, `GET IN` beside it, tap enters, `GET OUT` shows, tap
+exits. Stick up for 1.5 s takes the car 0 to 46.5 km/h over 10.8 m, up plus
+right turns it 153 degrees at 57.9 km/h, down brakes 57.9 to 6.3 in 1.25 s.
+
+Gotcha for testing: `requestAnimationFrame` does not fire in the headless
+harness, so anything the render loop draws cannot be tested there. `actLabel`
+and `stick` are exposed on `window.COURSE` for that reason.
+
 Verified with the sim driver: the ramp run reaches the deck at 4.26 on all five
 starting points and carries on at 58 km/h; the rail stops the car at z 0.20;
 the pipes stop it at z -4.56; a lateral run reaches 60.7 km/h and a 30 frame
