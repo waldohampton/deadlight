@@ -542,3 +542,27 @@ yard, west and back east across open ground, roughly 1.3 km. From it:
 Verified: boot puts the car at (6, 22) facing out of the yard, mode `car`; each
 of the five gates fires in order; crossing the start line after gate 5 finishes
 the run.
+
+### Stray lights on the circuit
+
+Reported as "weird flashy lights". Three things, all real.
+
+1. **The sun's shadow box was left behind.** The directional shadow camera is
+   110 m across, sized for the yard. Outside a shadow frustum the sampler clamps
+   to the texture edge, so out on the circuit patches of ground flipped between
+   lit and shadowed as you drove. The sun now travels with whoever is playing
+   (`focusSun`), verified tracking the car to (-60, 305).
+2. **Six point lights swept the road.** Every marker ring carried a
+   `PointLight`, so passing a gate dragged an amber pool across the tarmac. The
+   rings are emissive and do not need it. Point light count went 16 to 10.
+3. **The markers read as halos, not gates.** A flat ring lying on the ground
+   looked, from a chase camera, like something glowing in mid air above the car.
+   Driving levels now get a standing arch: two 7.4 m posts 12.8 m apart, a beam,
+   and a thin emissive line on the tarmac. Walking levels keep the floor rings.
+
+Also: poles no longer cast shadow, since thirty of them sat outside the old box
+for no visual return.
+
+Verified: no full frame flash across eight sampled frames while driving (mean
+luminance 76.4 to 77.2, near-white pixels 2 to 9), sun target tracks the car,
+arch reads as a checkpoint to drive through.

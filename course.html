@@ -181,6 +181,18 @@ sun.shadow.bias = -0.0008;
 sun.shadow.normalBias = 0.05;
 scene.add(sun); scene.add(sun.target);
 
+// keep the shadow box on whoever is playing, so it is never left behind
+function focusSun(){
+  // called once at load, before CAR and P exist, so bail until there is
+  // somebody to follow
+  var f = (MODE === 'car' && CAR) ? CAR.pos : (P ? P.pos : null);
+  if (!f) return;
+  sun.position.set(f.x + SUN_DIR.x * 150, SUN_DIR.y * 150 + 40, f.z + SUN_DIR.z * 150);
+  sun.target.position.set(f.x, 0, f.z);
+  sun.target.updateMatrixWorld();
+}
+focusSun();
+
 var camFill = new THREE.PointLight(0xe0b795, 0.40, 9, 2);
 camFill.position.set(0, 0.2, 0.6);
 camera.add(camFill);
@@ -490,7 +502,9 @@ function buildDesertCircuit(){
       var px = p.x + sx * 12.5, pz = p.z + sz * 12.5;
       var pole = new THREE.Mesh(poleGeo, poleMat);
       pole.position.set(px, 4.6, pz);
-      pole.castShadow = true;
+      // no shadow: thirty casters outside the old shadow box, and a pole on
+      // the horizon contributes nothing you can see
+      pole.castShadow = false;
       g.add(pole);
       var arm = new THREE.Mesh(armGeo, poleMat);
       arm.position.set(px, 8.6, pz);
@@ -576,13 +590,39 @@ scene.add(MARKER_GROUP);
   var ringMat = new THREE.MeshStandardMaterial({color:0x3a2a10, emissive:0xd08a28,
                                                 emissiveIntensity:0.55, roughness:0.55, metalness:0.1});
   routeList().slice(1).concat([finishPoint()]).forEach(function(c){
+    // driving levels get a gate you can aim at: two posts and a beam standing
+    // over the road. A flat ring on the ground reads as a glowing halo floating
+    // in the air from a chase camera, which is what looked like stray lights.
+    if (LEVEL.mode === 'car' && c.yaw !== undefined){
+      var px = Math.cos(c.yaw), pz = -Math.sin(c.yaw);   // across the road
+      var ARCH = {color:0x2c2214, emissive:0xffa63a, emissiveIntensity:0.85,
+                  roughness:0.5, metalness:0.1};
+      var archMat = new THREE.MeshStandardMaterial(ARCH);
+      var postGeo = new THREE.BoxGeometry(0.42, 7.4, 0.42);
+      [-1, 1].forEach(function(s){
+        var post = new THREE.Mesh(postGeo, archMat);
+        post.position.set(c.x + px * 6.4 * s, 3.7, c.z + pz * 6.4 * s);
+        MARKER_GROUP.add(post);
+      });
+      var beam = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.46, 13.2), archMat);
+      beam.position.set(c.x, 7.2, c.z);
+      beam.rotation.y = Math.atan2(px, pz);
+      MARKER_GROUP.add(beam);
+      // a thin line on the tarmac so you can see the trigger point
+      var lick = new THREE.Mesh(new THREE.PlaneGeometry(12.6, 0.5),
+                                new THREE.MeshStandardMaterial({color:0x3a2a10, emissive:0xffa63a,
+                                  emissiveIntensity:0.6, roughness:0.7}));
+      lick.rotation.x = -Math.PI/2; lick.rotation.z = -c.yaw;
+      lick.position.set(c.x, 0.06, c.z);
+      MARKER_GROUP.add(lick);
+      return;
+    }
     var r = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.09, 6, 30), ringMat);
     r.rotation.x = -Math.PI/2;
     r.position.set(c.x, (c.y || 0) + 0.07, c.z);
     MARKER_GROUP.add(r);
-    var l = new THREE.PointLight(0xffa030, 1.2, 12, 2);
-    l.position.set(c.x, (c.y || 0) + 0.9, c.z);
-    MARKER_GROUP.add(l);
+    // no point light per ring: six of them swept the road as you passed and
+    // read as stray lights flickering. The ring is emissive, that is enough.
   });
 })();
 
@@ -2061,6 +2101,14 @@ function frame(){
   var dt = Math.min(clock.getDelta(), 0.05);
   refreshUI();
   if (G.mode === 'play' && !G.pause) update(dt);
+
+  // the shadow camera is 110 m across, sized for the yard. Out on the circuit
+  // the car was leaving that box, and outside a shadow frustum the sampler
+  // clamps to the texture edge, so patches of ground flip between lit and
+  // shadowed as you drive. That reads as lights flickering on the road. The
+  // sun now travels with whoever is playing.
+  focusSun();
+
   if (window.POST_ON === false){
     renderer.setRenderTarget(null);
     renderer.render(scene, camera);
@@ -2230,6 +2278,9 @@ window.COURSE = {
   },
   carcam: function(){ return { yaw:+CARCAM.yaw.toFixed(3), pitch:+CARCAM.pitch.toFixed(3) }; },
   enterCar: function(){ enterCar(); },
+  focusSun: function(){ focusSun();
+    return { sun: [+sun.position.x.toFixed(1), +sun.position.z.toFixed(1)],
+             target: [+sun.target.position.x.toFixed(1), +sun.target.position.z.toFixed(1)] }; },
   level: function(){ return { id: LEVEL.id, name: LEVEL.name, mode: LEVEL.mode,
                              startInCar: !!LEVEL.startInCar, gates: LEVEL.route.length,
                              route: LEVEL.route, finish: LEVEL.finish }; },
