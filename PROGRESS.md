@@ -592,3 +592,39 @@ turned-around view is a clean gradient with hills sitting on the ground.
 Test note: the chase camera keeps its own yaw (`CARCAM`) and auto swings back,
 so `COURSE.carTo` alone does not point the camera. Call `COURSE.enterCar()`
 after it to sync, or the screenshots are of the wrong direction.
+
+## What "photoreal" actually costs
+
+He asked whether the desert can look photoreal without hurting performance.
+Honest answer: not truly, and the reason is assets, not shading. A 12 sided hill
+and 900 icosahedra are not photographs no matter what the renderer does. But
+three things cost one time instead of every frame, and all three shipped.
+
+1. **Image based lighting, baked once.** The sky dome is rendered into a
+   prefiltered PMREM cube at load, and the car takes it as `envMap`. Paint,
+   glass and the dish now reflect the same sunset the eye is reading instead of
+   being lit by an arbitrary hemisphere. Nothing per frame.
+   Trap: setting `scene.environment` broke every yard and road material, because
+   those use `onBeforeCompile` for triplanar mapping and recompiling them with an
+   environment renders them black. Measured: mean frame luminance 67.8 to 28.9,
+   with 85 percent of the frame in shadow. So the environment is applied to the
+   car and the gates only, not scene wide.
+2. **Ground clutter as instances.** 900 rocks and 1800 scrub tufts in two
+   `InstancedMesh` draws. The whole desert view is now 26 draw calls, 46,840
+   triangles, 9 programs.
+3. **Eroded mesas.** 12 sided bodies with cheap noise displacement instead of
+   6 sided prisms, which read as pyramids the moment you look at them.
+
+What is left, and what it really costs, if the look is to go further:
+
+- the ground is one flat plane with a 4 m tiling scan. Real ground needs three
+  or four layers at different scales, plus a normal map, ideally parallax. This
+  is shader work and a few MB of textures, and it is the single biggest tell.
+- hills need real terrain, heightmap plus erosion, not primitives
+- soft long shadows from a low sun are what sells a photograph, and they are the
+  expensive part: bigger cascades, more casters
+- camera behaviour is free and undersold: a longer lens, tighter framing, and
+  less field of view reads as a film still more than any material upgrade
+
+The car is already the best asset in the project: 48k triangles, scanned
+texture, and it is the thing that most rewards the environment map.

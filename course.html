@@ -139,7 +139,7 @@ torch.shadow.mapSize.set(512, 512);
 torch.shadow.bias = -0.0015;
 torch.shadow.normalBias = 0.04;
 camera.add(torch); camera.add(torch.target); scene.add(camera);
-scene.add(new THREE.HemisphereLight(0xffb27a, 0x2a1d18, 0.42));
+scene.add(new THREE.HemisphereLight(0xffb27a, 0x2a1d18, 0.38));
 
 // ---------------------------------------------------------------- sunset
 // The yard is baked at night, so the bake is treated as ambient occlusion and
@@ -176,6 +176,25 @@ sky.frustumCulled = false;
 // standing outside it looking at the dome's edge.
 camera.add(sky);
 sky.position.set(0, 0, 0);
+
+// Everything gets its ambient from the sky it is standing under, baked once
+// into a small prefiltered cube. This is what makes paint, glass and metal
+// respond to the same light the eye reads, instead of an arbitrary hemisphere
+// light. One precompute at load, nothing per frame.
+var ENV = (function(){
+  try {
+    var gen = new THREE.PMREMGenerator(renderer);
+    var envScene = new THREE.Scene();
+    envScene.add(new THREE.Mesh(sky.geometry, skyMat));
+    var rt = gen.fromScene(envScene, 0, 1, 2000);
+    gen.dispose();
+    return rt.texture;
+  } catch(e){ return null; }
+})();
+// Deliberately NOT scene.environment: the yard and road materials use
+// onBeforeCompile for triplanar mapping, and adding an env map to them
+// recompiles those shaders into something that renders black. The car and the
+// gates take the environment directly, which is where it actually shows.
 
 var sun = new THREE.DirectionalLight(0xffa858, 0.88);
 sun.position.copy(SUN_DIR).multiplyScalar(150);
@@ -538,19 +557,79 @@ function buildDesertCircuit(){
     }
   })();
 
-  // mesas on the horizon. Fog does most of the work, these just give the
-  // horizon a silhouette instead of a straight line.
+  // mesas on the horizon, eroded rather than extruded: a 6 sided prism reads as
+  // a pyramid the second you look at it. Cheap noise on a 12 sided body gives a
+  // silhouette that survives being looked at.
   (function(){
     var mat = new THREE.MeshStandardMaterial({color:0x553726, roughness:0.96, metalness:0.0, flatShading:true});
     var spots = [[-250, 150, 70, 62], [-170, -120, 90, 54], [150, -180, 100, 68],
                  [260, 120, 80, 58], [230, 300, 95, 60], [-230, 320, 75, 48],
                  [-30, 400, 110, 66], [330, 240, 70, 52]];
-    spots.forEach(function(s){
-      var m = new THREE.Mesh(new THREE.CylinderGeometry(s[2]*0.55, s[2], s[3], 6, 1), mat);
-      m.position.set(s[0], s[3]/2 - 4, s[1]);
-      m.rotation.y = s[0] * 0.01;
+    spots.forEach(function(s, si){
+      var geo = new THREE.CylinderGeometry(s[2]*0.52, s[2], s[3], 12, 4);
+      var pa = geo.attributes.position;
+      for (var vi = 0; vi < pa.count; vi++){
+        var vx = pa.getX(vi), vy = pa.getY(vi), vz = pa.getZ(vi);
+        var t = (vy + s[3]/2) / s[3];
+        var n = Math.sin(vx*0.09 + vz*0.07 + si) * Math.cos(vz*0.05 - vx*0.03);
+        var f = 1 + 0.16*n*(1 - t*0.55);
+        pa.setX(vi, vx*f); pa.setZ(vi, vz*f);
+      }
+      geo.computeVertexNormals();
+      var m = new THREE.Mesh(geo, mat);
+      m.position.set(s[0], s[3]/2 - 5, s[1]);
+      m.rotation.y = si * 0.7;
       g.add(m);
     });
+  })();
+
+  // ground clutter. Rocks and scrub as two instanced draws, so thousands of
+  // them cost two draw calls and no extra state changes. This is most of what
+  // separates "a road on a plane" from "a road through a desert".
+  (function(){
+    var seed = 20261112;
+    function rnd(){ seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; }
+
+    var rockGeo = new THREE.IcosahedronGeometry(1, 0);
+    var rockMat = new THREE.MeshStandardMaterial({color:0x6d5647, roughness:0.94,
+                                                  metalness:0.0, flatShading:true});
+    var ROCKS = 900;
+    var rocks = new THREE.InstancedMesh(rockGeo, rockMat, ROCKS);
+    rocks.receiveShadow = true;
+    var mtx = new THREE.Matrix4(), q = new THREE.Quaternion(), eu = new THREE.Euler();
+    var pos = new THREE.Vector3(), scl = new THREE.Vector3();
+    for (var i = 0; i < ROCKS; i++){
+      var pt = pts[Math.floor(rnd() * pts.length)];
+      var ang = rnd() * Math.PI * 2, rad = 11 + rnd() * rnd() * 150;
+      var sc = 0.18 + rnd() * rnd() * 2.4;
+      pos.set(pt.x + Math.cos(ang) * rad, sc * 0.34 - 0.06, pt.z + Math.sin(ang) * rad);
+      eu.set(rnd() * 0.5, rnd() * 6.283, rnd() * 0.5);
+      q.setFromEuler(eu);
+      scl.set(sc, sc * (0.45 + rnd() * 0.7), sc * (0.8 + rnd() * 0.5));
+      rocks.setMatrixAt(i, mtx.compose(pos, q, scl));
+    }
+    rocks.instanceMatrix.needsUpdate = true;
+    g.add(rocks);
+
+    // scrub: five sided tufts, dark and low. Reads as vegetation at distance
+    // without a single alpha texture or a shadow pass.
+    var bushGeo = new THREE.ConeGeometry(0.62, 0.85, 5, 1);
+    var bushMat = new THREE.MeshStandardMaterial({color:0x4a4a30, roughness:1.0,
+                                                  metalness:0.0, flatShading:true});
+    var BUSH = 1800;
+    var bush = new THREE.InstancedMesh(bushGeo, bushMat, BUSH);
+    for (var j = 0; j < BUSH; j++){
+      var bt = pts[Math.floor(rnd() * pts.length)];
+      var ba = rnd() * Math.PI * 2, br = 10 + rnd() * rnd() * 130;
+      var bs = 0.5 + rnd() * 1.1;
+      pos.set(bt.x + Math.cos(ba) * br, bs * 0.42 - 0.05, bt.z + Math.sin(ba) * br);
+      eu.set(0, rnd() * 6.283, 0);
+      q.setFromEuler(eu);
+      scl.set(bs, bs * (0.7 + rnd() * 0.8), bs);
+      bush.setMatrixAt(j, mtx.compose(pos, q, scl));
+    }
+    bush.instanceMatrix.needsUpdate = true;
+    g.add(bush);
   })();
 
   scene.add(g);
@@ -793,6 +872,7 @@ var MODE = 'foot';
       if (mt.name === 'paint'){ mt.color.setHex(0x2b3038); mt.roughness = 0.62; mt.metalness = 0.05; }
       if (mt.name === 'dish'){ mt.roughness = 0.88; mt.metalness = 0.04; }
       if (mt.name === 'rim'){ mt.color.setHex(0x333a46); mt.roughness = 0.55; mt.metalness = 0.45; }
+      if (ENV && mt.isMeshStandardMaterial){ mt.envMap = ENV; mt.envMapIntensity = 0.85; }
       mt.needsUpdate = true;
     });
     while (vis.children.length) vis.remove(vis.children[0]);
@@ -1985,6 +2065,10 @@ var POST = (function(){
     renderer.setRenderTarget(rtScene);
     renderer.clear();
     renderer.render(scene, camera);
+    // keep the scene pass stats before the composite passes overwrite them:
+    // renderer.info resets on every render call, so reading it later is useless
+    window.__calls = renderer.info.render.calls;
+    window.__tris = renderer.info.render.triangles;
 
     brightMat.uniforms.tDiffuse.value = rtScene.texture;
     pass(brightMat, rtA);
@@ -2115,8 +2199,11 @@ function bestNow(){ return MODE === 'car' ? G.bestCar : G.bestFoot; }
 
 // ---------------------------------------------------------------- loop
 var clock = new THREE.Clock();
+var FPS = { n:0, t:0 };
 function frame(){
   var dt = Math.min(clock.getDelta(), 0.05);
+  FPS.n++; FPS.t += dt;
+  if (FPS.t > 0.5){ window.__fps = Math.round(FPS.n / FPS.t); FPS.n = 0; FPS.t = 0; }
   refreshUI();
   if (G.mode === 'play' && !G.pause) update(dt);
 
@@ -2296,6 +2383,12 @@ window.COURSE = {
   },
   carcam: function(){ return { yaw:+CARCAM.yaw.toFixed(3), pitch:+CARCAM.pitch.toFixed(3) }; },
   enterCar: function(){ enterCar(); },
+  perf: function(){ return { calls: window.__calls || 0,
+                             tris: window.__tris || 0,
+                             programs: renderer.info.programs.length,
+                             textures: renderer.info.memory.textures,
+                             geometries: renderer.info.memory.geometries,
+                             fps: window.__fps || 0 }; },
   focusSun: function(){ focusSun();
     return { sun: [+sun.position.x.toFixed(1), +sun.position.z.toFixed(1)],
              target: [+sun.target.position.x.toFixed(1), +sun.target.position.z.toFixed(1)] }; },
