@@ -503,3 +503,42 @@ and the dt clamp changes the timing, so feel is Waldo's call on his own machine.
   ramp placement can.
 - `.git` is 132MB from early bake commits. Bakes are ignored now but the history
   still has them.
+
+## Levels, and the desert circuit
+
+The yard had been a walking course with a car bolted on, so the car lap reused
+the ramps and gantry because they happened to exist. Split by level instead:
+
+`LEVELS` is a table of levels; a level is a place, a mode and a route.
+`routeList()`, `finishPoint()` and `reset()` all ask the level, so a new level is
+data. Two exist.
+
+- `LEVELS.desert` — the driving level. `mode:'car'`, `startInCar:true`, six
+  route points (start plus five gates), finish back at the start. This is what
+  the game boots into.
+- `LEVELS.yard` — the walking level, the old yard course, kept intact.
+
+The trap that cost me a pass: `reset(true)` used to hard set `MODE = 'foot'` and
+park the car every time, so the level could ask for the car and be overruled a
+line later. It now sets the body the level asks for.
+
+### The circuit
+
+Built in code, not modelled, because a road is a ribbon and the shape has to be
+easy to change. A closed Catmull-Rom loop of 14 control points, south out of the
+yard, west and back east across open ground, roughly 1.3 km. From it:
+
+- an asphalt ribbon 8.4 m wide with UVs that run with the distance along the
+  road, so the texture tiles at 4 m and never stretches
+- a sandy shoulder 13.6 m wide underneath, road drawn 2 cm above it
+- centre dashes every 14 m, 3 m long
+- utility poles every 45 m on one side with a crossarm and sagging wires between
+  them, the wire built as a 10 segment line with a sine sag
+- eight mesas on the horizon, 70 to 110 m across, close enough to survive the
+  haze now that fog is 0.0072 instead of 0.0105
+- five gate rings placed by distance along the curve, so they sit on the road
+  wherever the shape moves
+
+Verified: boot puts the car at (6, 22) facing out of the yard, mode `car`; each
+of the five gates fires in order; crossing the start line after gate 5 finishes
+the run.
