@@ -465,6 +465,7 @@ var MODE = 'foot';
       if (mt.map){ mt.color.setHex(0x9aa0aa); mt.roughness = 0.52; mt.metalness = 0.55; }
       if (mt.name === 'paint'){ mt.color.setHex(0x2b3038); mt.roughness = 0.44; }
       if (mt.name === 'dish'){ mt.roughness = 0.78; mt.metalness = 0.30; }
+      if (mt.name === 'rim'){ mt.color.setHex(0x4a5160); mt.roughness = 0.32; mt.metalness = 0.88; }
       if (mt.emissive && mt.emissive.getHex() !== 0) mt.emissiveIntensity = 1.4;
       mt.needsUpdate = true;
     });
@@ -472,13 +473,21 @@ var MODE = 'foot';
     vis.add(m);
     CAR.wheels = [];
     CAR.wheelSpin = [];
+    CAR.wheelNodes = [];
     m.traverse(function(o){
       if (/^(tyre|hub|hub_cap)/.test(o.name)) CAR.wheelSpin.push({ o:o, q:o.quaternion.clone() });
+      // the fitted wheels: origin on the axle, so Y steers and X rolls
+      if (/^wheel_/.test(o.name)){
+        o.rotation.order = 'YXZ';
+        CAR.wheelNodes.push({ o:o, front: /^wheel_F/.test(o.name) });
+      }
     });
   }
-  new THREE.GLTFLoader().load('models/arrow_tripo.glb', fitArrow, undefined, function(){
-    new THREE.GLTFLoader().load('models/arrow_game.glb', fitArrow, undefined, function(e){
-      console.warn('no car model found, the box car stays', e);
+  new THREE.GLTFLoader().load('models/arrow_wheels.glb', fitArrow, undefined, function(){
+    new THREE.GLTFLoader().load('models/arrow_tripo.glb', fitArrow, undefined, function(){
+      new THREE.GLTFLoader().load('models/arrow_game.glb', fitArrow, undefined, function(e){
+        console.warn('no car model found, the box car stays', e);
+      });
     });
   });
 })();
@@ -637,7 +646,15 @@ function animateCar(){
   g.rotation.y = CAR.yaw;
   g.rotation.x = CAR.pitch;
   g.rotation.z = CAR.roll;
-  if (CAR.wheelSpin && CAR.wheelSpin.length){
+  if (CAR.wheelNodes && CAR.wheelNodes.length){
+    // front pair steers, all four roll. YXZ order, so Y turns the wheel in the
+    // arch and X spins it about its own axle without fighting the steer angle.
+    for (var k=0;k<CAR.wheelNodes.length;k++){
+      var wn = CAR.wheelNodes[k];
+      wn.o.rotation.y = wn.front ? CAR.steer : 0;
+      wn.o.rotation.x = CAR.spin;
+    }
+  } else if (CAR.wheelSpin && CAR.wheelSpin.length){
     _spinQ.setFromAxisAngle(_axX, CAR.spin);
     for (var k=0;k<CAR.wheelSpin.length;k++){
       var ws = CAR.wheelSpin[k];
