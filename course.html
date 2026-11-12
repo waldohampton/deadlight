@@ -268,6 +268,34 @@ var CHECKPOINTS = [
   {x:-15.4, y:2.26, z: -8.55,label:'TANK',   yaw:0}
 ];
 
+// The car cannot climb a 1.1 m catwalk or a tank to 6.99, so the run it races
+// is the yard it can actually drive: apron, up the gantry ramp, across the
+// deck, over the lip, down onto the far side. Same start, different middle.
+var CP_CAR = [
+  {x:  0.0, y:0.10, z: 10.5, label:'START',   yaw:0},
+  {x: 12.7, y:0.10, z: -2.4, label:'RAMP',    yaw:0},
+  {x: 12.7, y:4.26, z: -9.9, label:'GANTRY',  yaw:0},
+  {x: 12.7, y:0.00, z:-14.6, label:'LANDING', yaw:0}
+];
+var FINISH_CAR = {x:12.7, y:0.0, z:-18.6};
+
+function routeList(){ return MODE === 'car' ? CP_CAR : CHECKPOINTS; }
+function finishPoint(){ return MODE === 'car' ? FINISH_CAR : FINISH; }
+
+// the car markers need to be seen at 60 km/h, so they get a lit ring
+(function(){
+  var ringMat = new THREE.MeshBasicMaterial({color:0xffb038});
+  [CP_CAR[1], CP_CAR[2], CP_CAR[3], FINISH_CAR].forEach(function(c){
+    var r = new THREE.Mesh(new THREE.TorusGeometry(2.3, 0.055, 6, 30), ringMat);
+    r.rotation.x = -Math.PI/2;
+    r.position.set(c.x, c.y + 0.07, c.z);
+    scene.add(r);
+    var l = new THREE.PointLight(0xffa030, 1.5, 10, 2);
+    l.position.set(c.x, c.y + 0.8, c.z);
+    scene.add(l);
+  });
+})();
+
 // the tank only blocks at ground level; above its flange the scaffold rules
 var TANK = {x:-10.5, z:-12.0, r:3.2};
 
@@ -1327,14 +1355,23 @@ var POST = (function(){
 // ---------------------------------------------------------------- game flow
 function setCP(i){
   if (i <= G.cp) return;
+  var L = routeList();
   G.cp = i;
-  G.msg = 'MARKER — ' + CHECKPOINTS[i].label;
+  G.msg = 'MARKER — ' + L[i].label;
   G.msgT = 1.6;
-  document.querySelector('#cp b').textContent = CHECKPOINTS[i].label;
+  document.querySelector('#cp b').textContent = L[i].label;
 }
 
 function reset(full){
-  var c = CHECKPOINTS[full ? 0 : G.cp];
+  var c = routeList()[full ? 0 : G.cp];
+  if (MODE === 'car' && !full){
+    // on the car run the marker is where the car goes back to, not the player
+    CAR.pos.set(c.x, c.y + 0.02, c.z);
+    CAR.yaw = c.yaw; CAR.vel.set(0,0,0); CAR.vy = 0;
+    CAR.pitch = 0; CAR.roll = 0;
+    animateCar();
+    return;
+  }
   P.pos.set(c.x, c.y + 0.02, c.z);
   P.vel.set(0, 0, 0);
   P.vault = null;
@@ -1412,6 +1449,19 @@ function updateCar(dt){
   document.getElementById('spd').textContent = kmh.toFixed(0) + ' KM/H · CAR' + (CAR.grounded ? '' : ' · AIR');
   if (G.msgT > 0){ G.msgT -= dt; document.getElementById('msg').textContent = G.msg; }
   else document.getElementById('msg').textContent = '';
+
+  // the car run counts: markers and finish, sized for a 4.3 m car
+  for (var i=1;i<CP_CAR.length;i++){
+    var c = CP_CAR[i];
+    var tolY = c.label === 'LANDING' ? 1.6 : 2.6;
+    if (Math.abs(CAR.pos.x - c.x) < 4.0 && Math.abs(CAR.pos.z - c.z) < 4.0 &&
+        Math.abs(CAR.pos.y - c.y) < tolY) setCP(i);
+  }
+  // the finish only counts once every marker is behind you, or the car
+  // flying over the landing lights trips it in mid air
+  if (G.cp >= CP_CAR.length - 1 &&
+      Math.abs(CAR.pos.x - FINISH_CAR.x) < 4.0 && Math.abs(CAR.pos.z - FINISH_CAR.z) < 4.0 &&
+      Math.abs(CAR.pos.y - FINISH_CAR.y) < 3.0){ finish(); return; }
 }
 
 function update(dt){
@@ -1511,6 +1561,9 @@ window.addEventListener('resize', function(){
 window.COURSE = {
   TUNE: TUNE,
   CARTUNE: CARTUNE,
+  surfaceAt: surfaceAt,
+  boxes: function(){ return boxes.map(function(b){ return {name:b.name, x0:+b.x0.toFixed(2), x1:+b.x1.toFixed(2), z0:+b.z0.toFixed(2), z1:+b.z1.toFixed(2), y0:+b.y0.toFixed(2), y1:+b.y1.toFixed(2)}; }); },
+  ramps: function(){ return ramps.map(function(r){ return {x0:+r.x0.toFixed(2), x1:+r.x1.toFixed(2), z0:+r.z0.toFixed(2), z1:+r.z1.toFixed(2), y0:+r.y0.toFixed(2), y1:+r.y1.toFixed(2)}; }); },
   car: function(){
     return { mode: MODE, yaw:+CAR.yaw.toFixed(2), grounded: CAR.grounded,
              kmh:+ (Math.hypot(CAR.vel.x, CAR.vel.z)*3.6).toFixed(1),
