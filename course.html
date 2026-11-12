@@ -1623,6 +1623,8 @@ function update(dt){
   // hud
   document.querySelector('#clock').innerHTML = G.time.toFixed(2) + '<small>RUN</small>';
   document.getElementById('best').innerHTML = bestNow() === null ? 'NO TIME SET' : 'BEST ' + bestNow().toFixed(2);
+  // nothing tells you the car is enterable unless the game says so
+  if (nearCar() && G.msgT <= 0){ G.msg = 'E · GET IN THE ARROW'; G.msgT = 0.25; }
   var spdNow = Math.hypot(P.vel.x, P.vel.z);
   document.getElementById('spd').textContent = spdNow.toFixed(1) + ' M/S' + (P.vault ? ' · VAULT' : '');
   if (G.msgT > 0){ G.msgT -= dt; document.getElementById('msg').textContent = G.msg; }
