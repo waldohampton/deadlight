@@ -53,6 +53,24 @@ the selection and can silently do nothing, which exported the car sideways at
 the wrong length. Bake transforms into the mesh with `ob.data.transform(M)`
 and print the resulting bounds, so the numbers are checkable.
 
+## Sunset, not night
+
+The yard's lightmaps are baked at night, so the bake is now treated as ambient
+occlusion (`lightMapIntensity` 0.85, was 1.7) and the colour comes from three
+things added in `course.html`: a gradient sky dome (horizon `0xc26a36`, mid
+`0x7d4453`, zenith `0x172440`, plus a sun disc), a warm `DirectionalLight`
+at 0.88 from `SUN_DIR`, and a warm-shifted grade in the post pass. Hemisphere
+went from cool 0.34 to warm 0.42, fog from `0x0b1219` at 0.014 to `0x6e4638`
+at 0.0085, exposure 1.34 to 1.04.
+
+Measured on the same camera, mean of the frame: night was RGB 67/71/73 (cool,
+30% of pixels near black), sunset is 116/101/82 with the ground band at 103
+luma against 74. Warmth went from minus 6 to plus 34.
+
+Known mismatch: the baked shadows are night shadows, so they do not agree with
+the new sun direction. Re-baking `bake_night.py` with a low warm sun is the
+proper fix and has not been done.
+
 Verified with the sim driver: the ramp run reaches the deck at 4.26 on all five
 starting points and carries on at 58 km/h; the rail stops the car at z 0.20;
 the pipes stop it at z -4.56; a lateral run reaches 60.7 km/h and a 30 frame

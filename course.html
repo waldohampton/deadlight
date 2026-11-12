@@ -85,8 +85,8 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 var scene = new THREE.Scene();
-scene.background = new THREE.Color(0x05080d);
-scene.fog = new THREE.FogExp2(0x0b1219, 0.014);
+scene.background = new THREE.Color(0x1a1520);
+scene.fog = new THREE.FogExp2(0x6e4638, 0.0085);
 
 var camera = new THREE.PerspectiveCamera(64, window.innerWidth/window.innerHeight, 0.05, 300);
 camera.rotation.order = 'YXZ';
@@ -99,8 +99,52 @@ torch.shadow.mapSize.set(512, 512);
 torch.shadow.bias = -0.0015;
 torch.shadow.normalBias = 0.04;
 camera.add(torch); camera.add(torch.target); scene.add(camera);
-scene.add(new THREE.HemisphereLight(0x2a3d5c, 0x0a0c10, 0.34));
-var camFill = new THREE.PointLight(0x9fb6d8, 0.45, 9, 2);
+scene.add(new THREE.HemisphereLight(0xffb27a, 0x2a1d18, 0.42));
+
+// ---------------------------------------------------------------- sunset
+// The yard is baked at night, so the bake is treated as ambient occlusion and
+// the colour comes from a low sun, a warm dome and a grade. Re-baking the
+// lightmaps is the proper fix if the shadows ever need to agree with the sun.
+var SUN_DIR = new THREE.Vector3(0.62, 0.20, -1).normalize();
+var skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  uniforms: {
+    uTop: {value: new THREE.Color(0x172440)},
+    uMid: {value: new THREE.Color(0x7d4453)},
+    uHor: {value: new THREE.Color(0xc26a36)},
+    uSun: {value: SUN_DIR.clone()},
+    uSunCol: {value: new THREE.Color(0xffd9a6)}
+  },
+  vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: [
+    'varying vec3 vDir; uniform vec3 uTop, uMid, uHor, uSun, uSunCol;',
+    'void main(){',
+    '  float h = clamp(vDir.y * 1.25 + 0.06, 0.0, 1.0);',
+    '  vec3 c = mix(uHor, uMid, smoothstep(0.0, 0.34, h));',
+    '  c = mix(c, uTop, smoothstep(0.26, 0.90, h));',
+    '  float s = max(dot(normalize(vDir), normalize(uSun)), 0.0);',
+    '  c += uSunCol * pow(s, 40.0) * 1.6;',
+    '  c += uSunCol * pow(s, 5.0) * 0.10;',
+    '  gl_FragColor = vec4(c, 1.0);',
+    '}'
+  ].join('\n')
+});
+var sky = new THREE.Mesh(new THREE.SphereGeometry(260, 24, 16), skyMat);
+sky.frustumCulled = false;
+scene.add(sky);
+
+var sun = new THREE.DirectionalLight(0xffa858, 0.88);
+sun.position.copy(SUN_DIR).multiplyScalar(150);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -55; sun.shadow.camera.right = 55;
+sun.shadow.camera.top = 55; sun.shadow.camera.bottom = -55;
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 320;
+sun.shadow.bias = -0.0008;
+sun.shadow.normalBias = 0.05;
+scene.add(sun); scene.add(sun.target);
+
+var camFill = new THREE.PointLight(0xe0b795, 0.40, 9, 2);
 camFill.position.set(0, 0.2, 0.6);
 camera.add(camFill);
 
@@ -406,7 +450,7 @@ var MODE = 'foot';
 
   // a cool fill that travels with the car. Without it the body is a silhouette
   // against the yard and nothing about the shape reads at night.
-  var chaseFill = new THREE.PointLight(0xaec6e8, 1.7, 12, 2);
+  var chaseFill = new THREE.PointLight(0xd8b49a, 1.7, 12, 2);
   chaseFill.position.set(0, 1.35, 5.6);
   g.add(chaseFill);
 
@@ -743,7 +787,7 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
       t.encoding = THREE.sRGBEncoding;
       t.anisotropy = renderer.capabilities.getMaxAnisotropy();
       m.material.lightMap = t;
-      m.material.lightMapIntensity = 1.7;
+      m.material.lightMapIntensity = 0.85;   // the night bake is ambient now, the sun is the light
       m.material.needsUpdate = true;
       done();
     }, undefined, done);
@@ -1358,7 +1402,7 @@ var POST = (function(){
   var compMat = new THREE.ShaderMaterial({
     uniforms: {
       tDiffuse:{value:null}, tBloom:{value:null},
-      uTime:{value:0}, uBloom:{value:1.15}, uExposure:{value:1.34},
+      uTime:{value:0}, uBloom:{value:1.15}, uExposure:{value:1.04},
       uGrain:{value:0.009}, uVig:{value:0.45}, uCA:{value:0.0022}
     },
     vertexShader: vert,
@@ -1379,10 +1423,10 @@ var POST = (function(){
       '  c *= uExposure;',
       '  c = aces(c);',
       '  float l = dot(c, vec3(0.2126,0.7152,0.0722));',
-      '  vec3 cool = c * vec3(0.90, 0.98, 1.12);',
-      '  vec3 warm = c * vec3(1.12, 1.01, 0.86);',
-      '  c = mix(cool, warm, smoothstep(0.10, 0.80, l));',
-      '  c = mix(vec3(l), c, 1.07);',
+      '  vec3 cool = c * vec3(0.94, 0.96, 1.05) + vec3(0.006, 0.004, 0.012);',
+      '  vec3 warm = c * vec3(1.16, 1.02, 0.83) + vec3(0.016, 0.008, 0.0);',
+      '  c = mix(cool, warm, 0.15 + 0.85 * smoothstep(0.03, 0.62, l));',
+      '  c = mix(vec3(l), c, 1.05);',
       '  c = clamp(c, 0.0, 1.0);',
       '  c = mix(c, c * c * (3.0 - 2.0 * c), 0.45);',
       '  c *= 1.0 - uVig * r2 * 1.5;',
