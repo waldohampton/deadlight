@@ -566,3 +566,29 @@ for no visual return.
 Verified: no full frame flash across eight sampled frames while driving (mean
 luminance 76.4 to 77.2, near-white pixels 2 to 9), sun target tracks the car,
 arch reads as a checkpoint to drive through.
+
+### Turning around showed the sky dome's edge
+
+Reported as "weird sky stuff" when looking back. Three separate faults.
+
+1. **The sky dome was parented to the scene, not the camera.** It is a 900 m
+   sphere sitting over the yard, so 300 m out you were standing outside it and
+   looking at its edge, with the flat background colour behind: a big curved
+   purple shape with a hard rim. It is a child of the camera now, which cannot
+   be left behind and does not depend on the frame loop.
+2. **The camera far plane was 300.** The mesas are 200 to 400 m out, so they
+   were being clipped off the horizon entirely, which is why the desert read as
+   a flat cut off with nothing in it. Far is 1400, near moved 0.05 to 0.12 to
+   keep the depth precision usable, dome radius 900, ground disc 240 to 520 so
+   the mesas stand on it instead of floating past its edge.
+3. **Exponential fog made the mesas invisible.** At 290 m, `FogExp2` with 0.0045
+   is 82 percent fog: the mesa came out the same colour as the haze, so it was
+   there and unseeable. Linear `Fog(0xb06a42, 90, 620)` keeps the near field
+   clear and puts the haze at a chosen distance.
+
+Verified: all eight mesas project inside the frustum at mid circuit, and the
+turned-around view is a clean gradient with hills sitting on the ground.
+
+Test note: the chase camera keeps its own yaw (`CARCAM`) and auto swings back,
+so `COURSE.carTo` alone does not point the camera. Call `COURSE.enterCar()`
+after it to sync, or the screenshots are of the wrong direction.
