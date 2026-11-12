@@ -30,11 +30,20 @@
   #go{border:1px solid rgba(255,179,71,.5);background:none;color:#ffb347;font:inherit;
     font-size:11px;letter-spacing:4px;padding:14px 34px;cursor:pointer;}
   #go:hover{background:rgba(255,179,71,.08);}
-  #stick{position:fixed;left:26px;bottom:34px;width:116px;height:116px;border-radius:50%;
-    border:1px solid rgba(255,255,255,.13);display:none;}
-  #stick.on{display:block;}
+  #stick,#pad{position:fixed;width:116px;height:116px;border-radius:50%;
+    border:1px solid rgba(255,255,255,.22);display:none;
+    box-shadow:inset 0 0 26px rgba(0,0,0,.30);}
+  #stick{left:26px;bottom:40px;}
+  #pad{right:28px;bottom:156px;width:96px;height:96px;}
+  #stick.on,#pad.on{display:block;}
+  #stick.held,#pad.held{border-color:rgba(255,179,71,.60);background:rgba(255,179,71,.06);}
+  #stick::after,#pad::after{content:attr(data-label);position:absolute;left:0;right:0;
+    bottom:-17px;text-align:center;font:inherit;font-size:9px;letter-spacing:3px;
+    color:rgba(255,255,255,.45);pointer-events:none;}
   #knob{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
     border-radius:50%;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.25);}
+  #paddot{position:absolute;left:50%;top:50%;width:26px;height:26px;margin:-13px 0 0 -13px;
+    border-radius:50%;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);}
   #jump{position:fixed;right:30px;bottom:44px;width:88px;height:88px;border-radius:50%;
     border:1px solid rgba(255,179,71,.35);color:#ffb347;font:inherit;font-size:10px;letter-spacing:2px;
     display:none;background:rgba(255,179,71,.06);}
@@ -53,7 +62,8 @@
   <div id="msg"></div>
 </div>
 
-<div id="stick"><div id="knob"></div></div>
+<div id="stick" data-label="MOVE"><div id="knob"></div></div>
+<div id="pad" data-label="LOOK"><div id="paddot"></div></div>
 <button id="jump">JUMP</button>
 
 <div id="screen">
@@ -1288,9 +1298,10 @@ canvas.addEventListener('touchstart', function(e){
     var t = e.changedTouches[i];
     if (t.clientX < window.innerWidth*0.45 && !STICK.active){
       STICK.active = true; STICK.id = t.identifier; STICK.cx = t.clientX; STICK.cy = t.clientY;
-      document.getElementById('stick').classList.add('on');
+      document.getElementById('stick').classList.add('held');
     } else if (!LOOK.active){
       LOOK.active = true; LOOK.id = t.identifier; LOOK.lx = t.clientX; LOOK.ly = t.clientY;
+      document.getElementById('pad').classList.add('held');
     }
   }
   e.preventDefault();
@@ -1319,9 +1330,12 @@ canvas.addEventListener('touchend', function(e){
     if (t.identifier === STICK.id){
       STICK.active = false; STICK.id = null; STICK.x = STICK.y = 0;
       document.getElementById('knob').style.transform = '';
-      document.getElementById('stick').classList.remove('on');
+      document.getElementById('stick').classList.remove('held');
     }
-    if (t.identifier === LOOK.id){ LOOK.active = false; LOOK.id = null; }
+    if (t.identifier === LOOK.id){
+      LOOK.active = false; LOOK.id = null;
+      document.getElementById('pad').classList.remove('held');
+    }
   }
 }, {passive:false});
 // one touch button, three jobs: jump on foot, get in when you are close to the
@@ -1706,7 +1720,13 @@ function reset(full){
 function start(){
   document.getElementById('screen').style.display = 'none';
   document.getElementById('hud').classList.add('on');
-  if (IS_TOUCH){ document.getElementById('jump').classList.add('on'); }
+  if (IS_TOUCH){
+    document.getElementById('jump').classList.add('on');
+    // both pads are permanent on touch, so the controls are visible before you
+    // find them. They only brighten while you are actually using them.
+    document.getElementById('stick').classList.add('on');
+    document.getElementById('pad').classList.add('on');
+  }
   G.mode = 'play';
   G.running = false; G.time = 0; G.cp = 0;
   reset(true);
