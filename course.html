@@ -219,11 +219,12 @@ addBox(-17, 17, -8.12, -7.68, 0.53, 0.97, 'on');   // pipe_b
 addBox(-17, 17, -8.76, -8.44, 1.94, 2.26, 'on');   // pipe_c
 pad('catwalk', -6.6, -8.6, 8.4, 0.55, 2.26, 0.14, 0.26);
 
-// 4. the ramp to the gantry, off the back of the rail on the right
-ramp('ramp_up', 11.6, 13.8, -2.60, -9.30, 0.06, 4.26);
+// 4. the ramp to the gantry, off the back of the rail on the right.
+// 3.2 m wide: at 2.2 m the car had 12 cm either side and wedged on the corner.
+ramp('ramp_up', 11.0, 14.2, -2.60, -9.30, 0.06, 4.26);
 
 // 5. the gantry deck sits at 4.26; extend it east so the ramp arrives on it
-pad('deck_e', 12.0, -9.9, 1.8, 0.8, 4.26, 0.22, 0.26);
+pad('deck_e', 12.6, -9.9, 2.0, 0.8, 4.26, 0.22, 0.26);
 
 // 6. the drop: a lit shelf at pipe_c height hanging off the gantry's north side
 pad('shelf', 9.4, -7.6, 1.4, 1.5, 2.26, 0.18, 0.24);
@@ -248,6 +249,27 @@ post(-16.1, -13.10, 0, 4.63);
 post(-15.4, -15.60, 0, 6.14);
 post(-13.9, -16.60, 0, 6.75);
 
+// ramp guards: thin solid walls down the sides of every ramp that starts at
+// ground level. Without them you can enter a ramp sideways and end up inside
+// the wedge with the surface above you, which is what the first autopilot lap
+// did, three metres short of the mouth.
+(function(){
+  var t = 0.12;
+  ramps.forEach(function(r){
+    if (Math.min(r.y0, r.y1) > 0.6) return;      // scaffold ramps are not drivable
+    var top = Math.max(r.y0, r.y1) + 0.30;
+    var x0 = Math.min(r.x0, r.x1), x1 = Math.max(r.x0, r.x1);
+    var z0 = Math.min(r.z0, r.z1), z1 = Math.max(r.z0, r.z1);
+    if (r.axis === 'x'){
+      boxes.push({x0:x0, x1:x1, z0:z0 - t, z1:z0, y0:0, y1:top});
+      boxes.push({x0:x0, x1:x1, z0:z1, z1:z1 + t, y0:0, y1:top});
+    } else {
+      boxes.push({x0:x0 - t, x1:x0, z0:z0, z1:z1, y0:0, y1:top});
+      boxes.push({x0:x1, x1:x1 + t, z0:z0, z1:z1, y0:0, y1:top});
+    }
+  });
+})();
+
 // 8. finish: the tank cap is the high point of the yard
 var FINISH = {x:-10.5, y:6.99, z:-12.0};
 (function(){
@@ -269,15 +291,21 @@ var CHECKPOINTS = [
 ];
 
 // The car cannot climb a 1.1 m catwalk or a tank to 6.99, so the run it races
-// is the yard it can actually drive: apron, up the gantry ramp, across the
-// deck, over the lip, down onto the far side. Same start, different middle.
+// is a lap of the yard it can actually drive: apron, up the gantry ramp, across
+// the deck, over the lip, around the east end of the pipe rack, then the long
+// run back across the open north yard to the apron. Round trip, not a sprint.
 var CP_CAR = [
-  {x:  0.0, y:0.10, z: 10.5, label:'START',   yaw:0},
-  {x: 12.7, y:0.10, z: -2.4, label:'RAMP',    yaw:0},
-  {x: 12.7, y:4.26, z: -9.9, label:'GANTRY',  yaw:0},
-  {x: 12.7, y:0.00, z:-14.6, label:'LANDING', yaw:0}
+  {x:  0.0, y:0.10, z: 10.5, label:'START',     yaw:0},
+  {x: 12.7, y:0.10, z: -1.6, label:'RAMP',      yaw:0},
+  {x: 12.7, y:4.26, z: -9.9, label:'GANTRY',    yaw:0},
+  {x: 12.7, y:0.00, z:-14.0, label:'LANDING',   yaw:0},
+  {x: 19.5, y:0.00, z:-14.0, label:'EAST GATE', yaw:-Math.PI/2},
+  {x: 19.5, y:0.00, z:  3.0, label:'EAST RUN',  yaw:0},
+  {x:-18.0, y:0.00, z:  3.0, label:'WEST RUN',  yaw:0}
 ];
-var FINISH_CAR = {x:12.7, y:0.0, z:-18.6};
+// the finish is the apron again, so the run is a lap and the gate below keeps
+// the first marker from counting as the end of it
+var FINISH_CAR = {x:0.0, y:0.0, z:10.5};
 
 function routeList(){ return MODE === 'car' ? CP_CAR : CHECKPOINTS; }
 function finishPoint(){ return MODE === 'car' ? FINISH_CAR : FINISH; }
@@ -285,12 +313,12 @@ function finishPoint(){ return MODE === 'car' ? FINISH_CAR : FINISH; }
 // the car markers need to be seen at 60 km/h, so they get a lit ring
 (function(){
   var ringMat = new THREE.MeshBasicMaterial({color:0xffb038});
-  [CP_CAR[1], CP_CAR[2], CP_CAR[3], FINISH_CAR].forEach(function(c){
-    var r = new THREE.Mesh(new THREE.TorusGeometry(2.3, 0.055, 6, 30), ringMat);
+  CP_CAR.slice(1).concat([FINISH_CAR]).forEach(function(c){
+    var r = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.06, 6, 30), ringMat);
     r.rotation.x = -Math.PI/2;
     r.position.set(c.x, c.y + 0.07, c.z);
     scene.add(r);
-    var l = new THREE.PointLight(0xffa030, 1.5, 10, 2);
+    var l = new THREE.PointLight(0xffa030, 1.4, 11, 2);
     l.position.set(c.x, c.y + 0.8, c.z);
     scene.add(l);
   });
@@ -560,6 +588,26 @@ function stepCar(dt){
   CAR.spin  += Math.hypot(CAR.vel.x, CAR.vel.z) * dt / 0.36;
 }
 
+// anything solid at this hull point, at this height band
+function solidAt(cx, cz, lo, hi, base){
+  var i, b;
+  for (i=0;i<boxes.length;i++){
+    b = boxes[i];
+    if (hi <= b.y0 + 0.02 || lo >= b.y1 - 0.02) continue;
+    if (b.y1 <= base + 0.02) continue;                 // below the wheels, drive over it
+    if (b.y1 > base && b.y1 - base <= 0.85) continue;  // a kerb the wheels ride up
+    if (overlapXZ(b, cx, cz, CARTUNE.radius)) return b;
+  }
+  for (i=0;i<wallBoxes.length;i++){
+    b = wallBoxes[i];
+    if (hi <= b.y0 + 0.02 || lo >= b.y1 - 0.02) continue;
+    if (b.y1 <= base + 0.02) continue;
+    if (b.y1 > base && b.y1 - base <= 0.85) continue;
+    if (overlapXZ(b, cx, cz, CARTUNE.radius)) return b;
+  }
+  return null;
+}
+
 // does the car's two-circle hull overlap anything solid at this x/z?
 function carHitAt(x, z){
   var fx = -Math.sin(CAR.yaw), fz = -Math.cos(CAR.yaw);
@@ -571,13 +619,8 @@ function carHitAt(x, z){
     // the centre, or a nose up a slope reads as hitting a wall
     var here = surfaceAt(cx, cz, CAR.pos.y + 1.40, 0.0);
     var base = here === null ? CAR.pos.y : here;
-    for (var i=0;i<boxes.length;i++){
-      var b = boxes[i];
-      if (hi <= b.y0 + 0.02 || lo >= b.y1 - 0.02) continue;
-      if (b.y1 <= base + 0.02) continue;                 // below the wheels, drive over it
-      if (b.y1 > base && b.y1 - base <= 0.85) continue;  // a kerb the wheels ride up
-      if (overlapXZ(b, cx, cz, CARTUNE.radius)) return b;
-    }
+    var hit = solidAt(cx, cz, lo, hi, base);
+    if (hit) return hit;
     var tdx = cx - TANK.x, tdz = cz - TANK.z;
     if (CAR.pos.y < 6.0 && Math.hypot(tdx, tdz) < TANK.r + CARTUNE.radius) return {name:'tank', y1:6.8};
   }
@@ -630,8 +673,10 @@ function exitCar(){
 
 // ---------------------------------------------------------------- baked yard
 var meshes = [];
+var wallBoxes = [];   // yard geometry the car is not allowed to drive through
 new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
   scene.add(gltf.scene);
+  gltf.scene.updateMatrixWorld(true);
   gltf.scene.traverse(function(o){
     if (!o.isMesh) return;
     meshes.push(o);
@@ -641,7 +686,26 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
     var m = o.material;
     if (m && m.emissive && (m.emissiveMap || m.emissive.getHex() !== 0))
       m.emissiveIntensity = m.emissiveMap ? 2.2 : 6.0;
+
+    // anything taller than a kerb becomes a car collider, so the car stops at
+    // the sheds and posts instead of driving out through the side of the yard.
+    // Ramps are excluded: their axis aligned box is a 4 m wall and the slope is
+    // already handled by rampY, so including them would wall off the gantry.
+    if (!o.geometry.attributes.position) return;
+    var bb = new THREE.Box3().setFromObject(o);
+    if (!isFinite(bb.min.x)) return;
+    if (bb.max.y - bb.min.y <= 0.9 || bb.min.y >= 3.0) return;
+    for (var i=0;i<ramps.length;i++){
+      var r = ramps[i];
+      var rx0 = Math.min(r.x0, r.x1), rx1 = Math.max(r.x0, r.x1);
+      var rz0 = Math.min(r.z0, r.z1), rz1 = Math.max(r.z0, r.z1);
+      if (Math.min(bb.max.x, rx1) > Math.max(bb.min.x, rx0) &&
+          Math.min(bb.max.z, rz1) > Math.max(bb.min.z, rz0)) return;
+    }
+    wallBoxes.push({ x0:bb.min.x, x1:bb.max.x, z0:bb.min.z, z1:bb.max.z,
+                     y0:Math.max(bb.min.y, 0), y1:bb.max.y, name:o.name || '' });
   });
+  if (window.COURSE) window.COURSE.wallCount = wallBoxes.length;
   var pending = meshes.length;
   function done(){ if (--pending === 0) window.YARD_READY = true; }
   meshes.forEach(function(m){
@@ -960,7 +1024,8 @@ var keys = {};
 var STICK = {active:false, x:0, y:0, id:null};
 var LOOK = {active:false, id:null, lx:0, ly:0};
 
-try { G.best = parseFloat(localStorage.getItem('dl_course_best')) || null; } catch(e){}
+try { G.bestFoot = parseFloat(localStorage.getItem('dl_course_best')) || null;
+      G.bestCar = parseFloat(localStorage.getItem('dl_course_best_car')) || null; } catch(e){}
 
 document.addEventListener('keydown', function(e){
   if (e.code === 'Space'){ P.jumpBuffer = TUNE.buffer; e.preventDefault(); }
@@ -1408,17 +1473,29 @@ function finish(){
   G.running = false;
   if (document.exitPointerLock) document.exitPointerLock();
   var t = G.time.toFixed(2);
+  var isCar = (MODE === 'car');
+  var key = isCar ? 'dl_course_best_car' : 'dl_course_best';
+  var prev = isCar ? G.bestCar : G.bestFoot;
   var best = false;
-  if (G.best === null || G.time < G.best){ G.best = G.time; best = true;
-    try { localStorage.setItem('dl_course_best', String(G.best)); } catch(e){} }
+  if (prev === null || G.time < prev){
+    best = true;
+    if (isCar) G.bestCar = G.time; else G.bestFoot = G.time;
+    try { localStorage.setItem(key, String(G.time)); } catch(e){}
+  }
+  var shown = isCar ? G.bestCar : G.bestFoot;
+  var copy = isCar
+    ? 'That is the lap. Ramp, the drop off the gantry, and the long run home.'
+    : 'That is the high point of the yard. Run it again and carry more of it.';
   var s = document.getElementById('screen');
   s.style.display = 'flex';
   s.innerHTML = '<h1 style="color:#9dffbe">' + t + '</h1>' +
-    '<h2>' + (best ? 'NEW BEST' : 'BEST ' + G.best.toFixed(2)) + '</h2>' +
-    '<p>That is the high point of the yard. Run it again and carry more of it.</p>' +
+    '<h2>' + (best ? 'NEW BEST' : 'BEST ' + shown.toFixed(2)) + '</h2>' +
+    '<p>' + copy + '</p>' +
     '<button id="go">RUN AGAIN</button>';
   document.getElementById('go').addEventListener('click', function(){ location.reload(); });
 }
+
+function bestNow(){ return MODE === 'car' ? G.bestCar : G.bestFoot; }
 
 // ---------------------------------------------------------------- loop
 var clock = new THREE.Clock();
@@ -1435,7 +1512,7 @@ function frame(){
 }
 
 function updateCar(dt){
-  if (!G.running && (keys['KeyW'] || keys['ArrowUp'])){
+  if (!G.running && G.mode === 'play' && (keys['KeyW'] || keys['ArrowUp'])){
     G.running = true;
   }
   if (G.running) G.time += dt;
@@ -1444,23 +1521,25 @@ function updateCar(dt){
   placeCarCamera(dt);
 
   document.querySelector('#clock').innerHTML = G.time.toFixed(2) + '<small>RUN</small>';
-  document.getElementById('best').innerHTML = G.best === null ? 'NO TIME SET' : 'BEST ' + G.best.toFixed(2);
+  document.getElementById('best').innerHTML = bestNow() === null ? 'NO TIME SET' : 'BEST ' + bestNow().toFixed(2);
   var kmh = Math.hypot(CAR.vel.x, CAR.vel.z) * 3.6;
   document.getElementById('spd').textContent = kmh.toFixed(0) + ' KM/H · CAR' + (CAR.grounded ? '' : ' · AIR');
   if (G.msgT > 0){ G.msgT -= dt; document.getElementById('msg').textContent = G.msg; }
   else document.getElementById('msg').textContent = '';
 
-  // the car run counts: markers and finish, sized for a 4.3 m car
+  // the car run counts: markers and finish, sized for a 4.3 m car but no
+  // wider than the gate, or you can clip a marker 4 m off line and then cut
+  // the corner into the ramp guard
   for (var i=1;i<CP_CAR.length;i++){
     var c = CP_CAR[i];
-    var tolY = c.label === 'LANDING' ? 1.6 : 2.6;
-    if (Math.abs(CAR.pos.x - c.x) < 4.0 && Math.abs(CAR.pos.z - c.z) < 4.0 &&
+    var tolY = c.label === 'LANDING' ? 1.6 : (c.label === 'GANTRY' ? 1.2 : 2.6);
+    if (Math.abs(CAR.pos.x - c.x) < 2.8 && Math.abs(CAR.pos.z - c.z) < 2.8 &&
         Math.abs(CAR.pos.y - c.y) < tolY) setCP(i);
   }
   // the finish only counts once every marker is behind you, or the car
   // flying over the landing lights trips it in mid air
-  if (G.cp >= CP_CAR.length - 1 &&
-      Math.abs(CAR.pos.x - FINISH_CAR.x) < 4.0 && Math.abs(CAR.pos.z - FINISH_CAR.z) < 4.0 &&
+  if (G.mode === 'play' && G.cp >= CP_CAR.length - 1 &&
+      Math.abs(CAR.pos.x - FINISH_CAR.x) < 3.2 && Math.abs(CAR.pos.z - FINISH_CAR.z) < 3.2 &&
       Math.abs(CAR.pos.y - FINISH_CAR.y) < 3.0){ finish(); return; }
 }
 
@@ -1543,7 +1622,7 @@ function update(dt){
 
   // hud
   document.querySelector('#clock').innerHTML = G.time.toFixed(2) + '<small>RUN</small>';
-  document.getElementById('best').innerHTML = G.best === null ? 'NO TIME SET' : 'BEST ' + G.best.toFixed(2);
+  document.getElementById('best').innerHTML = bestNow() === null ? 'NO TIME SET' : 'BEST ' + bestNow().toFixed(2);
   var spdNow = Math.hypot(P.vel.x, P.vel.z);
   document.getElementById('spd').textContent = spdNow.toFixed(1) + ' M/S' + (P.vault ? ' · VAULT' : '');
   if (G.msgT > 0){ G.msgT -= dt; document.getElementById('msg').textContent = G.msg; }
