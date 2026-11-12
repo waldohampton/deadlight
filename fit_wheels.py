@@ -22,13 +22,13 @@ OUT = "/home/waldo/repos/deadlight/models/arrow_wheels.glb"
 
 AXLE_LEN = 1.25      # metres from the centre along Y (Blender: Y is length).
                      # measured contact patch mid: front 1.22, rear -1.25
-AXLE_H = 0.366       # measured tyre radius, so the wheel touches z 0 exactly
+AXLE_H = 0.355       # axle height = tyre radius, so the wheel meets z 0
 CUT_R = 0.40         # cut a touch outside the old tyre so none of it survives
 CUT_X = 0.66         # outboard of this is tyre
-TYRE_R = 0.368       # matches the original 0.732 diameter, so the stance holds
-TYRE_W = 0.28
-RIM_R = 0.235
-AXLE_X = 0.845       # wheel centre, outboard face lands at 0.985
+TYRE_R = 0.355       # was 0.368: read as too big
+TYRE_W = 0.245       # was 0.28: too wide made it balloon
+RIM_R = 0.185        # was 0.235: a big flat disc is what makes it look toylike
+AXLE_X = 0.815       # was 0.845: face now lands at 0.938, where the old tyre sat
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 sc = bpy.context.scene
@@ -84,27 +84,40 @@ def wheel(name, sx, sz):
     tyre.data.materials.append(M_TYRE)
     for p in tyre.data.polygons:
         p.use_smooth = True
-    # rim face, slightly proud of the tyre on the outboard side
-    bpy.ops.mesh.primitive_cylinder_add(vertices=24, radius=RIM_R, depth=TYRE_W * 0.94, location=(0, 0, 0))
+    # shoulder rings: a stepped shoulder instead of a flat drum end
+    for s2 in (-1, 1):
+        bpy.ops.mesh.primitive_cylinder_add(vertices=30, radius=TYRE_R - 0.024, depth=0.04, location=(0, 0, 0))
+        sh = bpy.context.object
+        sh.data.transform(Matrix.Rotation(math.pi/2, 4, 'Y'))
+        sh.data.materials.append(M_TYRE)
+        sh.location = (s2 * (TYRE_W*0.5 - 0.018), 0, 0)
+        for p in sh.data.polygons:
+            p.use_smooth = True
+        parts.append(sh)
+    # rim RECESSED into the tyre, not proud of it. A disc that sits flush with
+    # the sidewall reads as a cartoon wheel from any angle.
+    bpy.ops.mesh.primitive_cylinder_add(vertices=26, radius=RIM_R, depth=0.17, location=(0, 0, 0))
     rim = bpy.context.object
     rim.data.transform(Matrix.Rotation(math.pi/2, 4, 'Y'))
     rim.data.materials.append(M_RIM)
+    rim.location = (sx * 0.02, 0, 0)
     for p in rim.data.polygons:
         p.use_smooth = True
-    # five spokes, cheap depth at night but they catch the fill light
-    for k in range(5):
-        a = 2*math.pi*k/5
+    # ten slim spokes, not five chunky ones
+    for k in range(10):
+        a = 2 * math.pi * k / 10
         bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0))
         sp = bpy.context.object
-        sp.scale = (TYRE_W * 0.5, 0.045, 0.16)
+        sp.scale = (0.14, 0.026, 0.125)
         sp.data.materials.append(M_RIM)
-        sp.rotation_euler = (a, 0, 0)
-        sp.location = (sx * TYRE_W * 0.30, math.sin(a) * 0.15, math.cos(a) * 0.15)
+        sp.rotation_euler = (-a, 0, 0)          # long axis along the radius
+        sp.location = (sx * 0.02, math.sin(a) * 0.112, math.cos(a) * 0.112)
         parts.append(sp)
-    bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.055, depth=TYRE_W * 1.02, location=(0, 0, 0))
+    bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.045, depth=0.20, location=(0, 0, 0))
     hub = bpy.context.object
     hub.data.transform(Matrix.Rotation(math.pi/2, 4, 'Y'))
     hub.data.materials.append(M_HUB)
+    hub.location = (sx * 0.02, 0, 0)
     # arch liner: a black disc just inboard of the tyre, wider than the cut, so
     # the hole the cut left in the arch cannot be seen through. It spins with
     # the wheel and a uniform disc looks the same at any angle.
