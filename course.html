@@ -124,7 +124,7 @@ scene.background = new THREE.Color(0x1a1520);
 // exponential fog ate everything past 150 m, so the mesas came out the same
 // colour as the haze. Linear fog keeps the near field clear and lands the haze
 // at a distance that is chosen rather than implied.
-scene.fog = new THREE.Fog(0xb06a42, 90, 620);
+scene.fog = new THREE.Fog(0x8f8a76, 90, 620);
 
 var camera = new THREE.PerspectiveCamera(64, window.innerWidth/window.innerHeight, 0.12, 1400);
 camera.rotation.order = 'YXZ';
@@ -143,7 +143,7 @@ scene.add(new THREE.HemisphereLight(0xffb27a, 0x2a1d18, 0.38));
 // The yard is baked at night, so the bake is treated as ambient occlusion and
 // the colour comes from a low sun, a warm dome and a grade. Re-baking the
 // lightmaps is the proper fix if the shadows ever need to agree with the sun.
-var SUN_DIR = new THREE.Vector3(0.62, 0.20, -1).normalize();
+var SUN_DIR = new THREE.Vector3(0.62, 0.248, -1).normalize();
 var skyMat = new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
   uniforms: {
@@ -151,18 +151,49 @@ var skyMat = new THREE.ShaderMaterial({
     uMid: {value: new THREE.Color(0x7d4453)},
     uHor: {value: new THREE.Color(0xc26a36)},
     uSun: {value: SUN_DIR.clone()},
-    uSunCol: {value: new THREE.Color(0xffd9a6)}
+    uSunCol: {value: new THREE.Color(0xffd9a6)},
+    uSky: {value: null},
+    uSkyOn: {value: 0},
+    // Measured off sky_sunset.jpg, not guessed. The photographed sun sits at
+    // u 0.5862, and SUN_DIR's azimuth is u 0.3383, so the dome is turned by the
+    // difference and the sun in the photograph lands where the light comes
+    // from. The elevation is already close (11.9 deg against 11.9), which is why
+    // SUN_DIR's y went from 0.20 to 0.248: that is the photo's sun height.
+    uSkyYaw: {value: 0.2479},
+    uSkyGain: {value: 1.0}
   },
-  vertexShader: 'varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  vertexShader: [
+    'varying vec3 vDir;',
+    'void main(){',
+    // world direction, not object direction. The dome is a child of the camera,
+    // so object space turns with the view: a photographed sky sampled that way
+    // swings around as the player looks, and its sun stops agreeing with the
+    // light.
+    '  vDir = normalize((modelMatrix * vec4(position, 1.0)).xyz - cameraPosition);',
+    '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+    '}'
+  ].join('\n'),
   fragmentShader: [
     'varying vec3 vDir; uniform vec3 uTop, uMid, uHor, uSun, uSunCol;',
+    'uniform sampler2D uSky; uniform float uSkyOn, uSkyYaw, uSkyGain;',
     'void main(){',
-    '  float h = clamp(vDir.y * 1.25 + 0.06, 0.0, 1.0);',
+    '  vec3 d = normalize(vDir);',
+    '  float h = clamp(d.y * 1.25 + 0.06, 0.0, 1.0);',
     '  vec3 c = mix(uHor, uMid, smoothstep(0.0, 0.34, h));',
     '  c = mix(c, uTop, smoothstep(0.26, 0.90, h));',
-    '  float s = max(dot(normalize(vDir), normalize(uSun)), 0.0);',
-    '  c += uSunCol * pow(s, 40.0) * 1.6;',
-    '  c += uSunCol * pow(s, 5.0) * 0.10;',
+    // the photograph, when it has arrived. Until then the mixed gradient above
+    // is the sky, so the dome is never black while the jpeg loads.
+    '  if (uSkyOn > 0.5){',
+    '    vec2 uv = vec2(atan(d.z, d.x) * 0.15915494 + 0.5 + uSkyYaw,',
+    '                   asin(clamp(d.y, -1.0, 1.0)) * 0.31830989 + 0.5);',
+    '    vec3 p = texture2D(uSky, vec2(fract(uv.x), uv.y)).rgb;',
+    // the jpeg is LDR, so it is decoded to linear by hand (pow 2.2) and then
+    // graded by the same film pass as everything else rather than bypassing it
+    '    c = pow(p, vec3(2.2)) * uSkyGain;',
+    '  }',
+    '  float s = max(dot(d, normalize(uSun)), 0.0);',
+    '  c += uSunCol * pow(s, 900.0) * 2.0;',
+    '  c += uSunCol * pow(s, 6.0) * 0.05;',
     '  gl_FragColor = vec4(c, 1.0);',
     '}'
   ].join('\n')
@@ -174,6 +205,20 @@ sky.frustumCulled = false;
 // standing outside it looking at the dome's edge.
 camera.add(sky);
 sky.position.set(0, 0, 0);
+
+// The photographed sky. Loaded after the gradient is already live, so a failed
+// fetch leaves a sky instead of a black dome. 2:1 equirect, 52 KB at 2048 x
+// 1024, which is plenty for a dome that fills the top third of the frame.
+new THREE.TextureLoader().load('models/tex/sky_sunset.jpg', function(t){
+  t.encoding = THREE.LinearEncoding;
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  skyMat.uniforms.uSky.value = t;
+  skyMat.uniforms.uSkyOn.value = 1;
+  window.SKY_READY = true;
+}, undefined, function(e){ console.warn('sky failed', e); });
 
 // The sky is the ambient source in spirit, but not through PMREM. In this three
 // build a prefiltered cube handed to a material renders that surface black: it
@@ -200,7 +245,7 @@ function focusSun(){
   // somebody to follow
   var f = (MODE === 'car' && CAR) ? CAR.pos : (P ? P.pos : null);
   if (!f) return;
-  sun.position.set(f.x + SUN_DIR.x * 150, SUN_DIR.y * 150 + 40, f.z + SUN_DIR.z * 150);
+  sun.position.set(f.x + SUN_DIR.x * 150, SUN_DIR.y * 150, f.z + SUN_DIR.z * 150);
   sun.target.position.set(f.x, 0, f.z);
   sun.target.updateMatrixWorld();
 }
@@ -1221,7 +1266,8 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
   var YTEX = {};
   var TEX_FILES = ['asphalt_col','asphalt_nrm','asphalt_rgh',
                    'concrete_col','concrete_nrm','concrete_rgh',
-                   'metal_col','metal_nrm','metal_rgh'];
+                   'metal_col','metal_nrm','metal_rgh',
+                   'ground_col','ground_nrm','ground_rgh','pebble_col'];
   var texLeft = TEX_FILES.length;
   TEX_FILES.forEach(function(f){
     new THREE.TextureLoader().load('models/tex/' + f + '.jpg', function(t){
@@ -1267,6 +1313,93 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
     };
   }
 
+  // A photographed ground, in world space, at two scales at once.
+  //
+  // One tiled photo cannot be both the plain and the gravel under the wheels:
+  // at 40 m a tile it is a flat average up close, and at 2 m a tile the repeat
+  // is visible across a 520 m disc. So the macro scan carries the colour of the
+  // ground, and the pebble scan is divided by its own mean and multiplied in,
+  // which adds high frequency without moving the average colour anywhere. The
+  // ground also gets a real normal map, because a low sun raking a flat plane
+  // is the reason the plain read as a plane.
+  //
+  // The pebble mean is measured off the file (linear 0.290/0.235/0.179), so the
+  // detail layer is a modulation and not a second tint.
+  var PEBBLE_MEAN = new THREE.Vector3(0.290, 0.235, 0.179);
+
+  function photoground(mat, col, rgh, nrm, det, macScale, detScale, detAmt, tint, nrmAmt, desat){
+    if (!col) return;
+    [col, rgh, nrm, det].forEach(function(t){
+      if (!t) return;
+      // sampled by hand below, so the value must be raw and the sRGB curve is
+      // applied in the shader. Hardware sRGB decode would double it.
+      t.encoding = THREE.LinearEncoding;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.needsUpdate = true;
+    });
+    mat.map = null; mat.roughnessMap = null; mat.normalMap = null;
+    if (mat.color && mat.color.setHex) mat.color.setHex(tint);
+    mat.metalness = 0.0;
+    mat.roughness = 1.0;
+    mat.userData.ground = true;
+    mat.needsUpdate = true;
+    mat.onBeforeCompile = function(sh){
+      sh.uniforms.uGCol = {value: col};
+      sh.uniforms.uGRgh = {value: rgh};
+      sh.uniforms.uGNrm = {value: nrm};
+      sh.uniforms.uGDet = {value: det};
+      sh.uniforms.uGMac = {value: macScale};
+      sh.uniforms.uGDetS = {value: detScale};
+      sh.uniforms.uGDetAmt = {value: detAmt};
+      sh.uniforms.uGNrmAmt = {value: nrmAmt};
+      sh.uniforms.uGDesat = {value: desat === undefined ? 0.5 : desat};
+      sh.uniforms.uGDetMean = {value: PEBBLE_MEAN};
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vGPos;')
+        .replace('#include <project_vertex>',
+          '#include <project_vertex>\n  vGPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', [
+          '#include <common>',
+          'varying vec3 vGPos;',
+          'uniform sampler2D uGCol, uGRgh, uGNrm, uGDet;',
+          'uniform float uGMac, uGDetS, uGDetAmt, uGNrmAmt, uGDesat;',
+          'uniform vec3 uGDetMean;'
+        ].join('\n'))
+        .replace('#include <map_fragment>', [
+          '#include <map_fragment>',
+          '  vec2 gUV = vGPos.xz;',
+          '  vec3 gCol = pow(texture2D(uGCol, gUV * uGMac).rgb, vec3(2.2));',
+          // a photo of ground is a photo of LIT ground. Lighting it again with a
+          // low warm sun multiplies the same warmth in twice and the whole
+          // frame goes orange, so the albedo keeps the photo's structure and
+          // brightness variation but loses most of its own hue.
+          '  float gL = dot(gCol, vec3(0.2126, 0.7152, 0.0722));',
+          '  gCol = mix(gCol, vec3(gL), uGDesat);',
+          '  vec3 gDet = pow(texture2D(uGDet, gUV * uGDetS).rgb, vec3(2.2));',
+          '  gDet = clamp(gDet / max(uGDetMean, vec3(0.02)), vec3(0.35), vec3(2.4));',
+          // the detail layer fades out with distance. At 2.6 m a tile it is
+          // aliasing well before the horizon, and moire on a grazing plane
+          // reads as stripes of dirt that are not there.
+          '  float gFade = 1.0 - smoothstep(22.0, 90.0, distance(cameraPosition, vGPos));',
+          '  diffuseColor.rgb *= gCol * mix(vec3(1.0), gDet, uGDetAmt * gFade);'
+        ].join('\n'))
+        .replace('#include <roughnessmap_fragment>', [
+          '#include <roughnessmap_fragment>',
+          '  roughnessFactor *= texture2D(uGRgh, gUV * uGMac).g;'
+        ].join('\n'))
+        .replace('#include <normal_fragment_begin>', [
+          '#include <normal_fragment_begin>',
+          '  {',
+          '    vec3 gN = texture2D(uGNrm, gUV * uGMac).xyz * 2.0 - 1.0;',
+          // the ground is a flat plane with world-space uv, so the map's x and
+          // y are world x and z. Enough to make gravel catch a low sun.
+          '    normal = normalize(normal + vec3(gN.x, 0.0, gN.y) * uGNrmAmt);',
+          '  }'
+        ].join('\n'));
+    };
+  }
+
   function applyYardTextures(){
     meshes.forEach(function(o){
       var m = o.material;
@@ -1303,30 +1436,27 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
       if (mm) triplanar(mm, YTEX.concrete_col, YTEX.concrete_rgh, 0.34, 0.0);
     });
 
-    // the open ground gets its own copies of the asphalt so it can tile coarse
-    // over 480 m while the yard floor tiles at 2 m
-    if (apronMat && YTEX.asphalt_col){
-      var ac = YTEX.asphalt_col.clone(); ac.needsUpdate = true; ac.repeat.set(120, 120);
-      var ar = YTEX.asphalt_rgh.clone(); ar.needsUpdate = true; ar.repeat.set(120, 120);
-      apronMat.map = ac;
-      apronMat.roughnessMap = ar;
-      apronMat.color = new THREE.Color(0x93866f);
-      apronMat.metalness = 0.0;
-      apronMat.roughness = 1.0;
-      if (YTEX.asphalt_nrm){
-        var an = YTEX.asphalt_nrm.clone(); an.needsUpdate = true;
-        an.wrapS = an.wrapT = THREE.RepeatWrapping;
-        an.repeat.copy(ac.repeat);
-        apronMat.normalMap = an;
-        apronMat.normalScale.set(0.5, 0.5);
-      }
-      apronMat.needsUpdate = true;
+    // the open plain: the desert photo at 40 m a tile with the pebble layer at
+    // 2.6 m. This surface used to be asphalt tiled at 8.7 m, which is why the
+    // ground read as a flat plane from the chase camera: at that distance the
+    // tile mips down to one average colour.
+    if (apronMat && YTEX.ground_col){
+      photoground(apronMat, YTEX.ground_col, YTEX.ground_rgh, YTEX.ground_nrm,
+                  YTEX.pebble_col, 0.025, 0.385, 0.55, 0xa8a093, 0.9, 0.55);
     }
 
     // the desert road gets its own clones: its UVs run with the distance along
     // the ribbon, so the texture must not keep the yard floor's 2 m repeat
     if (YTEX.asphalt_col){
       TRACK_MATS.forEach(function(t){
+        if (t.kind === 'shoulder'){
+          // the flat colour that used to sit either side of the road, and the
+          // strip the chase camera looks at most. Same desert photo, tighter
+          // tile, so the road edge is ground rather than a painted ribbon.
+          photoground(t.mat, YTEX.ground_col, YTEX.ground_rgh, YTEX.ground_nrm,
+                      YTEX.pebble_col, 0.25, 0.385, 0.45, 0x8f887c, 0.7, 0.55);
+          return;
+        }
         var col = YTEX.asphalt_col.clone(); col.needsUpdate = true; col.repeat.set(1, 1);
         var rgh = YTEX.asphalt_rgh.clone(); rgh.needsUpdate = true; rgh.repeat.set(1, 1);
         var nrm = YTEX.asphalt_nrm ? YTEX.asphalt_nrm.clone() : null;
@@ -1336,7 +1466,7 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
         t.mat.normalMap = nrm;
         t.mat.normalScale.set(t.kind === 'road' ? 0.85 : 0.6,
                               t.kind === 'road' ? 0.85 : 0.6);
-        t.mat.color = new THREE.Color(t.kind === 'road' ? 0x6e6e6a : 0xb08a5c);
+        t.mat.color = new THREE.Color(t.kind === 'road' ? 0x82827d : 0xb08a5c);
         t.mat.metalness = 0.0;
         t.mat.roughness = 1.0;
         t.mat.needsUpdate = true;
@@ -2473,6 +2603,15 @@ window.COURSE = {
              hit: CAR.lastHit || '' };
   },
   carcam: function(){ return { yaw:+CARCAM.yaw.toFixed(3), pitch:+CARCAM.pitch.toFixed(3) }; },
+  // aiming the chase camera from a test. The camera swings itself back to the
+  // car's heading after 0.7 s without a mouse move, so a probe that only writes
+  // yaw gets a frame of the old direction; this also resets the idle timer.
+  carLook: function(y, p){
+    if (typeof y === 'number') CARCAM.yaw = y;
+    if (typeof p === 'number') CARCAM.pitch = p;
+    CARCAM.idle = 0;
+    return { yaw:+CARCAM.yaw.toFixed(3), pitch:+CARCAM.pitch.toFixed(3) };
+  },
   enterCar: function(){ enterCar(); },
   perf: function(){ return { calls: window.__calls || 0,
                              tris: window.__tris || 0,

@@ -1,11 +1,72 @@
 # DEADLIGHT — progress and handoff
 
-Last code change: `course.html`, uncommitted (title screen, lens, bonnet bug).
-Branch `master`; last commit `186fafc` is pushed.
+Last code change: `course.html`, the photographic pass (sky and ground). Branch `master`.
+Committed and pushed with this block.
 
-## Uncommitted, 2026-11-13: title screen, lens, bonnet avatar
+## Photographic pass, 2026-11-13: the sky and the ground
 
-`git status` is dirty: `course.html`, 112 insertions / 37 deletions, no commit yet.
+He asked for photographic, not photorealism, and for real photographs on the
+surfaces. This commit is two of the four passes: the desert floor and the sky.
+The scrub, the rocks and the mesas are still primitives with flat colour.
+
+1. **The sky is a photograph.** `qwantani_sunset_puresky`, Poly Haven, CC0,
+   equirect repacked to 2048 x 1024, **52 KB**. The dome samples it instead of
+   the hand-mixed gradient, which stays in the shader as the fallback until the
+   jpeg arrives, so the dome is never black while it loads.
+2. **The dome needed a world-space direction.** It is a child of the camera, so
+   `normalize(position)` turns with the view: a photographed sky sampled in
+   object space swings around as you look, and its sun stops agreeing with the
+   light. The vertex shader now uses
+   `normalize((modelMatrix * vec4(position,1.0)).xyz - cameraPosition)`.
+3. **The photographed sun and the DirectionalLight agree, and it is measured.**
+   `fetch_desert.py` finds the sun by thresholding the brightest cluster in the
+   image: u 0.5862, v 0.5661, azimuth 31 deg, elevation 11.9. SUN_DIR's azimuth
+   is u 0.338, so the dome is turned by `uSkyYaw` 0.2479 and the photograph's
+   sun lands exactly on the light. SUN_DIR y went 0.20 to 0.248 (elevation
+   11.9) to meet it, and `focusSun` no longer adds 40 m to the light height:
+   that offset had the light coming from 25 degrees while the sky said 12.
+   Verified by rendering the scene from the car's eye into a 64 x 64 target with
+   a camera aimed along the light: brightest pixel 0.4 deg / 1.2 deg off centre.
+4. **Fog follows the sky instead of fighting it.** 0xb06a42 to 0x8f8a76, taken
+   from the jpeg's own horizon band (median sRGB 188/193/179 across the ring,
+   236/221/182 on the sun side) and gamma corrected, so the haze the ground
+   fades into is the haze that is in the photograph.
+5. **The desert floor is two photographs at once.** `sandy_gravel_02` as the
+   macro layer at 40 m a tile, carrying colour, normal and roughness;
+   `pebble_ground_01` multiplied in at 2.6 m as the detail layer. `photoground()`
+   samples both in world space so the texel density is identical on the 520 m
+   plain and the 4 m shoulder, and decodes sRGB by hand because it owns its
+   samplers.
+6. **The detail layer is divided by its own measured mean** (linear 0.290 /
+   0.235 / 0.179) and clamped, so it adds high frequency without moving the
+   average colour, and it fades out past about 90 m because at 2.6 m a tile it
+   is aliasing into moire long before the horizon.
+7. **A photo of ground is a photo of lit ground.** Lighting it again with a warm
+   low sun doubles the warmth. First pass measured near-ground luma 141 against
+   85 before, warmth +118 against +76, and the whole frame read orange. The
+   albedo now keeps the photo's structure and drops 55 percent of its hue, tint
+   0xa8a093, and the same applies to the road shoulder, which was a flat colour
+   and is now the same ground photo at 4 m a tile.
+8. Verified: console clean (only the pre-existing triplanar warnings), sky and
+   yard texture flags true, ground reads as photographed dirt with no horizon
+   seam, sun aligned. Same drive before and after: near-ground band luma 84.9 to
+   129.6, whole frame 102.4 to 111.0. Textures went 1.8 MB to 2.6 MB plus 52 KB.
+9. Open: the yard level shares the sky and the fog. It loads, it is lit, and one
+   read reports a hard ground/sky line on the right of the frame. Not checked by
+   a human.
+
+**Bug found, pre-existing: `triplanar()` never patches anything.** It replaces
+`texture2D( map, vUv )` in `shader.fragmentShader`, but that expression lives
+inside `ShaderChunk.map_fragment`, not in the shader source, so every replace is
+a no-op and four materials warn `triplanar did not patch map_fragment` on load.
+The yard's concrete, facade, dark metal, steps and ramps are therefore tiling
+with the model's own UVs, which is exactly what the triplanar pass existed to
+avoid (a 26 m cube with a 0.1 u range smears). Fix is to rewrite
+`THREE.ShaderChunk.map_fragment` and substitute that, not the source line.
+
+## Earlier, 2026-11-13 (committed dca7298): title screen, lens, bonnet avatar
+
+It was 112 insertions and 37 deletions in `course.html`.
 
 1. Title screen now describes the level it is about to load: `THE LONG ROAD` plus
    driving keys for `LEVELS.desert`, `THE YARD` plus walking keys otherwise. It
@@ -21,7 +82,7 @@ Branch `master`; last commit `186fafc` is pushed.
    glb `Waldo` meshes), and `updateCar` enforces it hidden every frame. Hiding
    only `AV.root` left the glb character standing on the bonnet at spawn.
 
-Not verified by a person yet, and not committed.
+He said it looks good. Committed as `dca7298` and pushed.
 
 ## This session, 2026-11-11 (third session): the car
 

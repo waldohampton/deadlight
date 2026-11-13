@@ -3,3 +3,9 @@ Textures from Poly Haven, all CC0 (public domain, no attribution required).
 asphalt_05 (asphalt, yard floor): Poly Haven, CC0
 brushed_concrete_03 (concrete, sheds, blocks, kerbs): Poly Haven, CC0
 rusty_metal_02 (metal, tanks, pipes, railings): Poly Haven, CC0
+
+
+Desert pass:
+sandy_gravel_02 (ground): Poly Haven, CC0
+pebble_ground_01 (pebble): Poly Haven, CC0
+qwantani_sunset_puresky (sky): Poly Haven, CC0
