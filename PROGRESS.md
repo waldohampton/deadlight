@@ -1,6 +1,27 @@
 # DEADLIGHT — progress and handoff
 
-Last code change: `course.html`, traversal rebuild. Branch `master`, pushed.
+Last code change: `course.html`, uncommitted (title screen, lens, bonnet bug).
+Branch `master`; last commit `186fafc` is pushed.
+
+## Uncommitted, 2026-11-13: title screen, lens, bonnet avatar
+
+`git status` is dirty: `course.html`, 112 insertions / 37 deletions, no commit yet.
+
+1. Title screen now describes the level it is about to load: `THE LONG ROAD` plus
+   driving keys for `LEVELS.desert`, `THE YARD` plus walking keys otherwise. It
+   used to tell you to run the yard on foot while dropping you in the car.
+2. The PMREM environment is gone. Handing that prefiltered cube to a material
+   renders the surface black in this three build: it turned the car into a hole
+   and `scene.environment` blacked out the triplanar yard shaders. In its place:
+   an emissive tint on the car, a warm chase fill (`0xffd9b8`, 9.0, range 22) and
+   a `carKey` directional. Rocks went `0x54453a`, scrub `0x3f4029`.
+3. Longer lens: `CARCAM.dist` 7.4 to 9.6, pitch 0.30, `wantFov` 46 to 50, so the
+   car stops filling two thirds of the frame and reading as first person.
+4. `avatarSet()` now owns both bodies (the procedural rig under `AV.root` and the
+   glb `Waldo` meshes), and `updateCar` enforces it hidden every frame. Hiding
+   only `AV.root` left the glb character standing on the bonnet at spawn.
+
+Not verified by a person yet, and not committed.
 
 ## This session, 2026-11-11 (third session): the car
 

@@ -91,14 +91,12 @@
 
 <div id="screen">
   <h1>DEADLIGHT</h1>
-  <h2>THE YARD — A TRAVERSAL</h2>
-  <p>
-    Run the yard from the apron to the lamp on the tank.<br>
-    The floor is ground, not a fail state: keeping your speed is the whole game.<br><br>
-    <b>WASD / arrows</b> move · <b>SPACE</b> or <b>left click</b> jump · <b>SHIFT</b> run<br>
-    <span style="color:#6c7268">Run into anything waist high and you vault it. R takes you back to the last marker, SHIFT+R starts over.<br>
-    The car is parked to the right of the apron. <b>E</b> gets in, <b>E</b> gets out.</span>
+  <h2 id="scrLevel">THE LONG ROAD</h2>
+  <p id="scrCopy">
+    Five gates, one loop out of the yard and back. It is a road, not a track: hold
+    the throttle, aim at the arches, and do not lift for the corners.
   </p>
+  <p id="scrKeys"></p>
   <button id="go">START RUN</button>
 </div>
 
@@ -177,24 +175,11 @@ sky.frustumCulled = false;
 camera.add(sky);
 sky.position.set(0, 0, 0);
 
-// Everything gets its ambient from the sky it is standing under, baked once
-// into a small prefiltered cube. This is what makes paint, glass and metal
-// respond to the same light the eye reads, instead of an arbitrary hemisphere
-// light. One precompute at load, nothing per frame.
-var ENV = (function(){
-  try {
-    var gen = new THREE.PMREMGenerator(renderer);
-    var envScene = new THREE.Scene();
-    envScene.add(new THREE.Mesh(sky.geometry, skyMat));
-    var rt = gen.fromScene(envScene, 0, 1, 2000);
-    gen.dispose();
-    return rt.texture;
-  } catch(e){ return null; }
-})();
-// Deliberately NOT scene.environment: the yard and road materials use
-// onBeforeCompile for triplanar mapping, and adding an env map to them
-// recompiles those shaders into something that renders black. The car and the
-// gates take the environment directly, which is where it actually shows.
+// The sky is the ambient source in spirit, but not through PMREM. In this three
+// build a prefiltered cube handed to a material renders that surface black: it
+// is what turned the car into a hole, and setting it scene wide blacked out the
+// triplanar yard shaders too. A cheap emissive tint on the car stands in for sky
+// bounce, costs nothing, and cannot break a shader.
 
 var sun = new THREE.DirectionalLight(0xffa858, 0.88);
 sun.position.copy(SUN_DIR).multiplyScalar(150);
@@ -593,7 +578,7 @@ function buildDesertCircuit(){
     function rnd(){ seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; }
 
     var rockGeo = new THREE.IcosahedronGeometry(1, 0);
-    var rockMat = new THREE.MeshStandardMaterial({color:0x6d5647, roughness:0.94,
+    var rockMat = new THREE.MeshStandardMaterial({color:0x54453a, roughness:0.98,
                                                   metalness:0.0, flatShading:true});
     var ROCKS = 900;
     var rocks = new THREE.InstancedMesh(rockGeo, rockMat, ROCKS);
@@ -616,7 +601,7 @@ function buildDesertCircuit(){
     // scrub: five sided tufts, dark and low. Reads as vegetation at distance
     // without a single alpha texture or a shadow pass.
     var bushGeo = new THREE.ConeGeometry(0.62, 0.85, 5, 1);
-    var bushMat = new THREE.MeshStandardMaterial({color:0x4a4a30, roughness:1.0,
+    var bushMat = new THREE.MeshStandardMaterial({color:0x3f4029, roughness:1.0,
                                                   metalness:0.0, flatShading:true});
     var BUSH = 1800;
     var bush = new THREE.InstancedMesh(bushGeo, bushMat, BUSH);
@@ -666,6 +651,29 @@ LEVELS.yard = {
 };
 
 var LEVEL = LEVELS.desert;
+
+// the title screen describes the level you are about to run, not a level from
+// two builds ago. It used to tell you to run the yard on foot while dropping
+// you in the car on a desert road.
+(function(){
+  var h = document.getElementById('scrLevel');
+  var c = document.getElementById('scrCopy');
+  var k = document.getElementById('scrKeys');
+  if (!h || !c || !k) return;
+  if (LEVEL.startInCar){
+    h.textContent = 'THE LONG ROAD';
+    c.innerHTML = 'Five gates and one loop, out of the yard and back.<br>' +
+                  'Hold the throttle, aim at the arches, do not lift for the corners.';
+    k.innerHTML = '<b>W / S</b> throttle and brake · <b>A / D</b> steer · ' +
+                  '<b>SPACE</b> handbrake · <b>E</b> get out · <b>R</b> back to the last gate';
+  } else {
+    h.textContent = 'THE YARD';
+    c.innerHTML = 'Run the yard from the apron to the lamp on the tank.<br>' +
+                  'The floor is ground, not a fail state: keeping your speed is the whole game.';
+    k.innerHTML = '<b>WASD</b> move · <b>SPACE</b> jump · <b>SHIFT</b> run · ' +
+                  '<b>E</b> get in the car · <b>R</b> back to the last marker';
+  }
+})();
 
 function routeList(){ return LEVEL.route; }
 function finishPoint(){ return LEVEL.finish; }
@@ -798,9 +806,17 @@ var MODE = 'foot';
 
   // a cool fill that travels with the car. Without it the body is a silhouette
   // against the yard and nothing about the shape reads at night.
-  var chaseFill = new THREE.PointLight(0xd8b49a, 1.7, 12, 2);
-  chaseFill.position.set(0, 1.35, 5.6);
+  // a black car under a low sun is a hole unless something lifts it. This is a
+  // warm fill from above and behind, roughly where the sky would bounce off the
+  // ground behind the car, so the body reads as paint instead of a silhouette.
+  // It travels with the car (child of the car group) so there is no cost to it.
+  var chaseFill = new THREE.PointLight(0xffd9b8, 9.0, 22, 2);
+  chaseFill.position.set(0, 3.4, 6.4);
   g.add(chaseFill);
+  var carKey = new THREE.DirectionalLight(0xffcfa0, 0.55);
+  carKey.position.set(-3.5, 4.0, 5.0);
+  g.add(carKey);
+  g.add(carKey.target);
 
   // a soft blob under the car: the beam points forward, so without this the
   // car reads as hovering
@@ -858,7 +874,30 @@ var MODE = 'foot';
         if (mt.name === 'tyre_tex'){         // rubber, not painted metal
           mt.color.setHex(0x8e8e8e); mt.roughness = 0.86; mt.metalness = 0.0;
         } else {
-          mt.color.setHex(0x5a5f66); mt.roughness = 0.74; mt.metalness = 0.05;
+          // The scanned albedo is a matte black car, so it is a black hole at
+          // dusk: no colour to light, whatever you point at it. Lift it once
+          // into a canvas at load. Same hue, twice the value, and it costs a
+          // 512 texture that was already being uploaded.
+          try {
+            var im = mt.map.image;
+            var cv = document.createElement('canvas');
+            cv.width = 512; cv.height = 512;
+            var cx = cv.getContext('2d');
+            cx.drawImage(im, 0, 0, 512, 512);
+            var id = cx.getImageData(0, 0, 512, 512), dd = id.data;
+            for (var q = 0; q < dd.length; q += 4){
+              dd[q] = Math.min(255, dd[q] * 1.30);
+              dd[q+1] = Math.min(255, dd[q+1] * 1.30);
+              dd[q+2] = Math.min(255, dd[q+2] * 1.30);
+            }
+            cx.putImageData(id, 0, 0);
+            var tx = new THREE.CanvasTexture(cv);
+            tx.encoding = THREE.sRGBEncoding; tx.flipY = false;
+            mt.map = tx;
+          } catch(e){}
+        }
+        if (mt.map && mt.name !== 'tyre_tex') {
+          mt.color.setHex(0x9fa4ac); mt.roughness = 0.50; mt.metalness = 0.08;
         }
       }
       // The export carries a normal map and high frequency roughness detail,
@@ -871,10 +910,16 @@ var MODE = 'foot';
       mt.aoMapIntensity = 1.0;
       if (mt.emissive) mt.emissive.setHex(0x000000);
       mt.emissiveIntensity = 0;
+      // stands in for sky bounce on matte black paint: enough that the body
+      // reads as a surface, not enough to look like it is lit from inside
+      if (mt.name !== 'tyre_tex' && mt.emissive){
+        mt.emissive.setHex(0x120e0a);
+        mt.emissiveIntensity = 0.30;
+      }
+      if (!mt.map && !mt.name.match(/tyre/)){ mt.color.setHex(0x2a2d33); }
       if (mt.name === 'paint'){ mt.color.setHex(0x2b3038); mt.roughness = 0.62; mt.metalness = 0.05; }
       if (mt.name === 'dish'){ mt.roughness = 0.88; mt.metalness = 0.04; }
       if (mt.name === 'rim'){ mt.color.setHex(0x333a46); mt.roughness = 0.55; mt.metalness = 0.45; }
-      if (ENV && mt.isMeshStandardMaterial){ mt.envMap = ENV; mt.envMapIntensity = 0.30; }
       mt.needsUpdate = true;
     });
     while (vis.children.length) vis.remove(vis.children[0]);
@@ -1107,7 +1152,7 @@ function nearCar(){
 
 function enterCar(){
   MODE = 'car';
-  AV.root.visible = false;
+  avatarSet(false);
   torch.visible = false;
   CARCAM.yaw = CAR.yaw; CARCAM.idle = 9;
   // the touch pads are labelled, so no keyboard instructions there
@@ -1121,7 +1166,7 @@ function exitCar(){
   var rx = Math.cos(CAR.yaw), rz = -Math.sin(CAR.yaw);
   P.pos.set(CAR.pos.x + rx * 1.9, CAR.pos.y + 0.05, CAR.pos.z + rz * 1.9);
   P.vel.set(0, 0, 0); P.vault = null; P.grounded = false;
-  AV.root.visible = true;
+  avatarSet(true);
   torch.visible = true;
   AV.root.position.set(P.pos.x, P.pos.y, P.pos.z);
   TOUCH.hand = false;           // never exit with the handbrake stuck on
@@ -1306,6 +1351,27 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
 
 // ---------------------------------------------------------------- the character
 var AV = { phase: 0, yaw: 0, legL:null, legR:null, armL:null, armR:null, torso:null, hips:null, root:null };
+
+// The character exists twice: a procedural rig parented to AV.root, and the
+// rigged model loaded from a glb which gets parented to the scene. Hiding
+// AV.root alone left the glb body standing exactly where the car spawns, which
+// is the dark lump sitting on the bonnet. One function owns both.
+function avatarSet(v){
+  AV.root.visible = v;
+  // Hide the model's meshes by their own flag as well. Toggling an ancestor
+  // group is not enough: the glb's rig is parented somewhere this code does not
+  // own, and any frame that re-parents or re-shows it puts the character back
+  // on the car bonnet. The mesh flag is local and cannot be undone elsewhere.
+  if (!AV.meshes){
+    AV.meshes = [];
+    scene.traverse(function(o){
+      if (o.isMesh && (o.name === 'Waldo' || (o.parent && o.parent.name === 'WaldoRig')))
+        AV.meshes.push(o);
+    });
+  }
+  for (var i = 0; i < AV.meshes.length; i++) AV.meshes[i].visible = v;
+  if (AV.glb) AV.glb.visible = v;
+}
 (function(){
   var suit = new THREE.MeshStandardMaterial({color:0x232a30, roughness:0.72, metalness:0.22});
   var trim = new THREE.MeshStandardMaterial({color:0x2c3126, roughness:0.52, metalness:0.45,
@@ -1505,7 +1571,9 @@ function placeCamera(dt){
 
 // chase camera for the car: sits behind the heading, pays out and opens the
 // lens with speed, and lets the mouse look around before it swings back
-var CARCAM = { yaw:0, dist:7.4, cur:7.4, pitch:0.22, idle:9 };
+// longer lens needs a longer dolly: at 46 degrees and 7.4 m the car filled
+// two thirds of the frame and read as a first person view
+var CARCAM = { yaw:0, dist:9.6, cur:9.6, pitch:0.30, idle:9 };
 
 function placeCarCamera(dt){
   var spd = Math.hypot(CAR.vel.x, CAR.vel.z);
@@ -1519,7 +1587,7 @@ function placeCarCamera(dt){
   // longer lens, further back: the same car fills the frame but the
   // perspective flattens, which is most of what makes a shot look photographed
   var wantDist = CARCAM.dist + Math.min(1.8, spd * 0.09);
-  var wantFov  = 46 + Math.min(8, spd * 0.55);
+  var wantFov  = 50 + Math.min(8, spd * 0.55);
 
   var cp = Math.cos(CARCAM.pitch), sp = Math.sin(CARCAM.pitch);
   var dir = new THREE.Vector3(Math.sin(CARCAM.yaw) * cp, sp, Math.cos(CARCAM.yaw) * cp);
@@ -2150,12 +2218,12 @@ function reset(full){
       CAR.pos.set(c.x, (c.y || 0) + 0.02, c.z);
       CAR.yaw = c.yaw || 0;
       CARCAM.yaw = CAR.yaw;
-      AV.root.visible = false; torch.visible = false;
+      avatarSet(false); torch.visible = false;
       camera.add(torch); camera.add(torch.target);
     } else {
       MODE = 'foot';
       CAR.pos.set(5.6, 0, 12.6); CAR.yaw = 0;
-      AV.root.visible = true; torch.visible = true;
+      avatarSet(true); torch.visible = true;
     }
     CAR.vel.set(0, 0, 0); CAR.vy = 0;
     CAR.steer = 0; CAR.pitch = 0; CAR.roll = 0;
@@ -2240,6 +2308,13 @@ function frame(){
 }
 
 function updateCar(dt){
+  // The walking body must never be on screen while you are driving. It spawned
+  // on the same spot as the car, so a visible avatar is a white lump sitting on
+  // the bonnet. Enforced every frame rather than only at the transitions,
+  // because one missed path is all it takes.
+  var avShown = AV.root.visible;
+  if (!avShown && AV.meshes) for (var _i = 0; _i < AV.meshes.length; _i++) if (AV.meshes[_i].visible){ avShown = true; break; }
+  if (avShown){ avatarSet(false); torch.visible = false; }
   if (!G.running && G.mode === 'play' && (keys['KeyW'] || keys['ArrowUp'])){
     G.running = true;
   }
