@@ -460,6 +460,72 @@ var CHECKPOINTS = [
 var TRACK_MATS = [];          // road materials, textured once the scans load
 var LEVELS = {};              // level id -> { mode, route, finish, spawn }
 
+// ---------------------------------------------------------------- rock photos
+// The rock was the last thing in this level with no photograph on it: the mesas
+// were one flat colour and the clutter was another flat colour. Both are CC0
+// sandstone now. Poly Haven publishes the real world size of each scan, so the
+// repeat is a measurement and not a taste setting: an 18.3 m cliff on a mesa, a
+// 13.9 m boulder close up on the rocks.
+var ROCKTEX = {};
+var ROCK_WAIT = [];
+function loadRockTex(){
+  var want = [['cliff_col', 1], ['cliff_nrm', 0], ['cliff_rgh', 0],
+              ['boulder_col', 1], ['boulder_nrm', 0], ['boulder_rgh', 0]];
+  var left = want.length;
+  function done(){
+    if (--left > 0) return;
+    for (var i = 0; i < ROCK_WAIT.length; i++){
+      try { ROCK_WAIT[i](); } catch(e){ console.warn('rock texture apply failed', e); }
+    }
+    window.ROCK_READY = true;
+  }
+  want.forEach(function(w){
+    new THREE.TextureLoader().load('models/tex/' + w[0] + '.jpg', function(t){
+      t.encoding = w[1] ? THREE.sRGBEncoding : THREE.LinearEncoding;
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      ROCKTEX[w[0]] = t;
+      done();
+    }, undefined, function(e){ console.warn('rock texture failed', w[0], e); done(); });
+  });
+}
+function onRockTex(fn){ ROCK_WAIT.push(fn); }
+
+// the map, normal and roughness of one scan onto one material. A tint of white
+// means the photo carries the colour; anything else multiplies into it. `det`
+// is an extra multiplication of the same photo at a different scale, which is
+// what breaks a tiled scan without a second download: one cliff face repeated
+// five times across a mesa reads as wallpaper, the same face multiplied by
+// itself at 3.4x does not.
+function rockify(mat, slug, nrmAmt, tint, det){
+  var c = ROCKTEX[slug + '_col'], n = ROCKTEX[slug + '_nrm'], r = ROCKTEX[slug + '_rgh'];
+  if (!c) return false;
+  mat.map = c;
+  if (n){ mat.normalMap = n; mat.normalScale.set(nrmAmt, nrmAmt); }
+  if (r) mat.roughnessMap = r;
+  mat.color.setHex(tint === undefined ? 0xffffff : tint);
+  mat.roughness = 1.0; mat.metalness = 0.0;
+  if (det){
+    mat.onBeforeCompile = function(sh){
+      sh.uniforms.uRockDet = { value: c };
+      sh.uniforms.uRockDetS = { value: det.scale };
+      sh.uniforms.uRockDetAmt = { value: det.amount };
+      sh.uniforms.uRockDetMean = { value: det.mean };
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uRockDet;\nuniform float uRockDetS, uRockDetAmt;\nuniform vec3 uRockDetMean;')
+        .replace('#include <map_fragment>', [
+          '#include <map_fragment>',
+          '  vec3 rDet = pow(texture2D(uRockDet, vUv * uRockDetS).rgb, vec3(2.2));',
+          '  rDet = clamp(rDet / max(uRockDetMean, vec3(0.02)), vec3(0.45), vec3(2.0));',
+          '  diffuseColor.rgb *= mix(vec3(1.0), rDet, uRockDetAmt);'
+        ].join('\n'));
+    };
+  }
+  mat.needsUpdate = true;
+  return true;
+}
+loadRockTex();
+
 function buildDesertCircuit(){
   // A loop out of the yard to the south, across open ground, and back. The
   // shape is quoted in the concept art: one long road, poles on one side,
@@ -593,10 +659,17 @@ function buildDesertCircuit(){
   // a pyramid the second you look at it. Cheap noise on a 12 sided body gives a
   // silhouette that survives being looked at.
   (function(){
-    var mat = new THREE.MeshStandardMaterial({color:0x553726, roughness:0.96, metalness:0.0, flatShading:true});
+    // Photographed sandstone, and the strata are the whole point: they run
+    // horizontally, so a mesa stops being a coloured lump the moment the low
+    // sun rakes across them. One texture upload for all eight meshes, because
+    // the repeat is baked into each mesa's own uv: the scan is 18.3 m of real
+    // rock face, so a 100 m mesa gets its circumference divided by that and a
+    // 60 m one gets three tiles up its height.
+    var mat = new THREE.MeshStandardMaterial({color:0xffffff, roughness:1.0, metalness:0.0});
     var spots = [[-250, 150, 70, 62], [-170, -120, 90, 54], [150, -180, 100, 68],
                  [260, 120, 80, 58], [230, 300, 95, 60], [-230, 320, 75, 48],
                  [-30, 400, 110, 66], [330, 240, 70, 52]];
+    var TILE = 18.3;
     spots.forEach(function(s, si){
       var geo = new THREE.CylinderGeometry(s[2]*0.52, s[2], s[3], 12, 4);
       var pa = geo.attributes.position;
@@ -608,10 +681,24 @@ function buildDesertCircuit(){
         pa.setX(vi, vx*f); pa.setZ(vi, vz*f);
       }
       geo.computeVertexNormals();
+      var circ = Math.PI * (s[2]*0.52 + s[2]);
+      var ru = Math.max(1, Math.round(circ / TILE));
+      var rv = Math.max(1, Math.round(s[3] / TILE));
+      var uv = geo.attributes.uv;
+      for (var ui = 0; ui < uv.count; ui++){ uv.array[ui*2] *= ru; uv.array[ui*2+1] *= rv; }
+      uv.needsUpdate = true;
       var m = new THREE.Mesh(geo, mat);
       m.position.set(s[0], s[3]/2 - 5, s[1]);
       m.rotation.y = si * 0.7;
       g.add(m);
+    });
+    // the second scale. 18.3 m is the honest tile for the scan, and on a 100 m
+    // face that is five repeats of the same cracks, which reads as wallpaper at
+    // 60 m. The same photo multiplied in at 3.4x is a different crack pattern
+    // and kills the repeat for free. Mean is measured off the file.
+    onRockTex(function(){
+      rockify(mat, 'cliff', 1.0, 0xffffff,
+              { scale: 4.2, amount: 0.45, mean: new THREE.Vector3(0.204, 0.083, 0.027) });
     });
   })();
 
@@ -625,6 +712,15 @@ function buildDesertCircuit(){
     var rockGeo = new THREE.IcosahedronGeometry(1, 0);
     var rockMat = new THREE.MeshStandardMaterial({color:0x54453a, roughness:0.98,
                                                   metalness:0.0, flatShading:true});
+    // same stone as the mesas, at boulder scale, so the clutter reads as pieces
+    // of the thing on the horizon instead of grey lumps. The uv of an
+    // icosahedron runs the whole rock, and the scan is 13.9 m of rock face, so
+    // the repeat is pulled under 1 to look at a 1.7 m window of it: at repeat 1
+    // a 1 m rock averages the whole photograph and comes out flat.
+    onRockTex(function(){
+      if (ROCKTEX.boulder_col) ROCKTEX.boulder_col.repeat.set(0.15, 0.15);
+      rockify(rockMat, 'boulder', 1.2, 0xd2c0b0);
+    });
     var ROCKS = 900;
     var rocks = new THREE.InstancedMesh(rockGeo, rockMat, ROCKS);
     rocks.receiveShadow = true;
@@ -1292,7 +1388,8 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
   var TEX_FILES = ['asphalt_col','asphalt_nrm','asphalt_rgh',
                    'concrete_col','concrete_nrm','concrete_rgh',
                    'metal_col','metal_nrm','metal_rgh',
-                   'ground_col','ground_nrm','ground_rgh','pebble_col'];
+                   'ground_col','ground_nrm','ground_rgh','pebble_col',
+                   'gravel_col'];
   var texLeft = TEX_FILES.length;
   TEX_FILES.forEach(function(f){
     new THREE.TextureLoader().load('models/tex/' + f + '.jpg', function(t){
@@ -1351,10 +1448,13 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
   // The pebble mean is measured off the file (linear 0.290/0.235/0.179), so the
   // detail layer is a modulation and not a second tint.
   var PEBBLE_MEAN = new THREE.Vector3(0.290, 0.235, 0.179);
+  // the middle scale. Measured off gravel_col.jpg the same way.
+  var GRAVEL_MEAN = new THREE.Vector3(0.292, 0.159, 0.070);
 
-  function photoground(mat, col, rgh, nrm, det, macScale, detScale, detAmt, tint, nrmAmt, desat){
+  function photoground(mat, col, rgh, nrm, det, macScale, detScale, detAmt, tint, nrmAmt, desat, midAmt, midScale){
     if (!col) return;
-    [col, rgh, nrm, det].forEach(function(t){
+    var mid = midAmt ? YTEX.gravel_col : null;
+    [col, rgh, nrm, det, mid].forEach(function(t){
       if (!t) return;
       // sampled by hand below, so the value must be raw and the sRGB curve is
       // applied in the shader. Hardware sRGB decode would double it.
@@ -1379,6 +1479,14 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
       sh.uniforms.uGNrmAmt = {value: nrmAmt};
       sh.uniforms.uGDesat = {value: desat === undefined ? 0.5 : desat};
       sh.uniforms.uGDetMean = {value: PEBBLE_MEAN};
+      sh.uniforms.uGMid = {value: mid};
+      sh.uniforms.uGMidS = {value: midScale || 0.13};
+      sh.uniforms.uGMidAmt = {value: midAmt || 0};
+      sh.uniforms.uGMidMean = {value: GRAVEL_MEAN};
+      // handle for live tuning: the ground layers are a taste call and a reload
+      // per value costs a GLB fetch
+      mat.userData.gmid = sh.uniforms.uGMidAmt;
+      mat.userData.gdet = sh.uniforms.uGDetAmt;
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vGPos;')
         .replace('#include <project_vertex>',
@@ -1387,9 +1495,9 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
         .replace('#include <common>', [
           '#include <common>',
           'varying vec3 vGPos;',
-          'uniform sampler2D uGCol, uGRgh, uGNrm, uGDet;',
-          'uniform float uGMac, uGDetS, uGDetAmt, uGNrmAmt, uGDesat;',
-          'uniform vec3 uGDetMean;'
+          'uniform sampler2D uGCol, uGRgh, uGNrm, uGDet, uGMid;',
+          'uniform float uGMac, uGDetS, uGDetAmt, uGNrmAmt, uGDesat, uGMidS, uGMidAmt;',
+          'uniform vec3 uGDetMean, uGMidMean;'
         ].join('\n'))
         .replace('#include <map_fragment>', [
           '#include <map_fragment>',
@@ -1407,7 +1515,15 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
           // aliasing well before the horizon, and moire on a grazing plane
           // reads as stripes of dirt that are not there.
           '  float gFade = 1.0 - smoothstep(22.0, 90.0, distance(cameraPosition, vGPos));',
-          '  diffuseColor.rgb *= gCol * mix(vec3(1.0), gDet, uGDetAmt * gFade);'
+          // the middle scale: gravel patches at 7.5 m a tile. The fade is much
+          // longer than the detail layer's, because this is the scale that
+          // carries 20 to 120 m, which is exactly the band where one 40 m scan
+          // was reading as a flat plane.
+          '  vec3 gMid = pow(texture2D(uGMid, gUV * uGMidS).rgb, vec3(2.2));',
+          '  gMid = clamp(gMid / max(uGMidMean, vec3(0.02)), vec3(0.40), vec3(2.2));',
+          '  float gMidFade = 1.0 - smoothstep(70.0, 210.0, distance(cameraPosition, vGPos));',
+          '  diffuseColor.rgb *= gCol * mix(vec3(1.0), gDet, uGDetAmt * gFade);',
+          '  diffuseColor.rgb *= mix(vec3(1.0), gMid, uGMidAmt * gMidFade);'
         ].join('\n'))
         .replace('#include <roughnessmap_fragment>', [
           '#include <roughnessmap_fragment>',
@@ -1467,7 +1583,8 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
     // tile mips down to one average colour.
     if (apronMat && YTEX.ground_col){
       photoground(apronMat, YTEX.ground_col, YTEX.ground_rgh, YTEX.ground_nrm,
-                  YTEX.pebble_col, 0.025, 0.385, 0.55, 0xa8a093, 0.9, 0.55);
+                  YTEX.pebble_col, 0.025, 0.385, 0.55, 0xa8a093, 0.9, 0.55,
+                  0.70, 0.085);
     }
 
     // the desert road gets its own clones: its UVs run with the distance along
@@ -1479,7 +1596,8 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
           // strip the chase camera looks at most. Same desert photo, tighter
           // tile, so the road edge is ground rather than a painted ribbon.
           photoground(t.mat, YTEX.ground_col, YTEX.ground_rgh, YTEX.ground_nrm,
-                      YTEX.pebble_col, 0.25, 0.385, 0.45, 0x8f887c, 0.7, 0.55);
+                      YTEX.pebble_col, 0.25, 0.385, 0.45, 0x8f887c, 0.7, 0.55,
+                      0.50, 0.12);
           return;
         }
         var col = YTEX.asphalt_col.clone(); col.needsUpdate = true; col.repeat.set(1, 1);

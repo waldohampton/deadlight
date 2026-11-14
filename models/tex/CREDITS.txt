@@ -9,3 +9,8 @@ Desert pass:
 sandy_gravel_02 (ground): Poly Haven, CC0
 pebble_ground_01 (pebble): Poly Haven, CC0
 qwantani_sunset_puresky (sky): Poly Haven, CC0
+
+Rock pass:
+cliff_side (cliff, mesas on the horizon, 18.3 m tile): Poly Haven, CC0
+rock_boulder_cracked (boulder, the scattered rock clutter, 13.9 m tile): Poly Haven, CC0
+gravelly_sand (gravel, the middle scale of the ground, 24.8 m tile): Poly Haven, CC0

@@ -760,3 +760,72 @@ Two other faults found on the way:
 Test note: the exit point is inside the fill light's radius, so anything that
 changes that light has to be checked with the player on foot and the car in
 frame, not from the chase camera.
+
+## Sourcing the rock, and what a texture cannot do
+
+He asked for photographic environment. The honest audit first: the car is a scan,
+the road and the plain carry photo scans, the sky is a photograph. What was
+still flat colour was all the rock (eight mesas and 900 scattered stones) and
+the plain had two scales and a hole in the middle of them.
+
+Sourced, all CC0 Poly Haven, `fetch_rock.py`, 9 maps, 1.5 MB at 1 k JPEG q82
+(the whole tex folder is 4.5 MB now):
+
+- `cliff_side` - 18.3 m of sedimentary canyon wall. Exists for one reason: the
+  strata run horizontally, and a low sun raking horizontal beds is the thing
+  that reads as geology instead of as a coloured lump.
+- `rock_boulder_cracked` - 13.9 m of cracked boulder close up, for the clutter.
+- `gravelly_sand` - 24.8 m, for the missing middle scale of the ground.
+
+Applied:
+
+1. **Mesas.** One material, eight meshes, and the repeat baked into each
+   mesa's own uv rather than onto the texture: `round(circumference / 18.3)`
+   across, `round(height / 18.3)` up. That is a measurement, not a taste
+   setting, and it means one upload serves eight meshes at the right texel
+   density each. `flatShading` came off at the same time, because a photo on a
+   faceted cylinder reads as low poly with wallpaper on it.
+2. **The repeat.** 18.3 m is the honest tile and on a 100 m face that is still
+   five repeats of the same cracks, which reads as brickwork. Fixed without a
+   second download: `rockify()` multiplies the same photo into the diffuse at
+   4.2x its own scale, divided by its measured linear mean (0.204/0.083/0.027)
+   so it modulates and does not retint. Two incommensurate crack patterns, no
+   visible tile. Same trick the ground already uses for pebbles.
+3. **Clutter.** Boulder scan on the 900 instanced rocks. The uv of an
+   icosahedron runs the whole rock and the scan is 13.9 m, so the repeat is
+   pulled to 0.15: a 1 m stone looks at a 1.7 m window of the photo. At repeat
+   1 it averages the whole photograph and stays flat, which is exactly what the
+   first attempt did.
+4. **The plain, third scale.** Measured, not assumed: at the apron the macro
+   scan is 24 m a tile and the pebble detail is 2.6 m, so 20 to 120 m had
+   nothing on it, which is the band the chase camera looks at most. The gravel
+   scan is now a middle layer at 11.8 m a tile, mean divided, faded out by
+   210 m. Worth 0.70 on the plain and 0.50 on the shoulder.
+
+Verification, because a layer that does nothing looks exactly like a layer that
+works: the middle layer's uniform is exposed on `material.userData.gmid`, and
+toggling it between 0.70 and 0 changes 4,068 pixels with a peak delta of 46. It
+is live and it is subtle, which is the point.
+
+Cost: 34 draw calls, 105,653 triangles, 26 textures, 22 programs. The rock pass
+added zero draw calls (the mesas were already eight meshes) and 9 texture
+uploads.
+
+What is still a render, and it is not a texture problem:
+
+1. **The mesas are smooth cylinders.** The photo sits on a 12 sided body with
+   sinusoidal noise. A photograph needs a silhouette with ledges, gullies and a
+   talus skirt at the base; the hard line where cliff meets ground is the
+   clearest tell in the frame.
+2. **The plain is a perfectly flat plane.** Three photo scales and a normal map
+   cannot fake relief. This wants displacement or parallax, which is shader
+   work and a bigger normal bake.
+3. **The props are primitives.** 900 icosahedra and the pale marker cones read
+   as low poly at 20 m no matter what is mapped on them. Photo-scanned rocks and
+   alpha-cut scrub cards are assets, not textures.
+4. The haze is uniform. Real distance in a desert has depth variation, not one
+   linear fog colour.
+
+A blind read of the frame after this pass scored it 3.5/10 for photographic.
+The material work moved the mesa from flat to real; the score is held down by
+geometry, and geometry is the next money, not more maps.
