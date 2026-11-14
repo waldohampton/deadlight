@@ -710,3 +710,53 @@ What is left, and what it really costs, if the look is to go further:
 
 The car is already the best asset in the project: 48k triangles, scanned
 texture, and it is the thing that most rewards the environment map.
+
+## The shirt that glowed
+
+He got out of the car at the start line and the walking body's shirt went pure
+white, no fabric, a halo in an otherwise dark frame.
+
+It was not the shirt. The car carries a chase fill (point light, intensity 9,
+distance 22, decay 2) and a key (directional, 0.55), both added years of commits
+ago so a near black body reads as paint from the chase camera. Under r128's
+legacy attenuation, 9 at 7 m is about 4.2 of irradiance against a sun of 0.88:
+five suns, on the one object in the level with a near white albedo. The key is a
+directional light, so it has no falloff at all and lights the desert wherever
+the car happens to be.
+
+Measured on one frozen frame, at the shirt:
+
+- every light off: 28
+- sun alone: 245 / 209 / 143
+- car fill alone: 254 / 253 / 233
+- fill and key at full, as shipped: 254 / 253 / 234, with 95 percent of the
+  shirt's pixels at or above 225 in every channel: a flat white block
+
+Per object light exclusion is not available. r128 filters `light.layers`
+against the camera, not against the object, so putting the car's lights on
+their own layer and the car meshes on it too just removes the light from the
+whole frame. Tested, both ways.
+
+The fix: those two lights are a chase camera cheat, so they now run at full
+strength only while you are in the car. `carFill()` holds 9.0 / 0.55 in car mode
+and 0.6 / 0.10 on foot, where the body they were lighting is the player and the
+camera is 3 m behind him instead of a night chase cam. The driving frame is
+untouched, verified against the same shot.
+
+Same frame after: the shirt reads 248 / 228 / 189 with shading and folds, and
+no pixels at white. The car at the door is darker than it was and correct: it is
+a dark car at sunset, lit by the sun and its own env map, not by a floodlight.
+
+Two other faults found on the way:
+
+1. **Coming out of the car the torch was still parented to the camera**, so the
+   beam hung behind the character's head and pointed where the camera looked.
+   `exitCar()` now parents it the same way `start()` does.
+2. **On foot, standing on the finish ended the run.** The car branch required
+   every marker first, the walking branch did not, and in a car level the start
+   line is the finish line: getting out before you drove anything scored 0.00
+   and announced a new best. The walking branch now requires the markers too.
+
+Test note: the exit point is inside the fill light's radius, so anything that
+changes that light has to be checked with the player on foot and the car in
+frame, not from the chase camera.

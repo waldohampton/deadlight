@@ -862,6 +862,13 @@ var MODE = 'foot';
   carKey.position.set(-3.5, 4.0, 5.0);
   g.add(carKey);
   g.add(carKey.target);
+  // Both of these are a cheat for the chase camera: they exist so a near black
+  // body reads as paint instead of a hole. They are also five times the sun
+  // (legacy point lights, no inverse square), so anyone standing at the door
+  // was lit like a studio subject and a white shirt went pure white. They stay
+  // at full strength only while you are inside the car, where the walking body
+  // is hidden anyway.
+  CAR.fill = chaseFill; CAR.key = carKey;
 
   // a soft blob under the car: the beam points forward, so without this the
   // car reads as hovering
@@ -1195,8 +1202,20 @@ function nearCar(){
   return Math.hypot(P.pos.x - CAR.pos.x, P.pos.z - CAR.pos.z) < 3.6 && Math.abs(P.pos.y - CAR.pos.y) < 2.2;
 }
 
+// The car's fill and key exist to make the body read from the chase camera.
+// Standing at the door they light the walking body instead, which is how a
+// white shirt ends up as a white blob, so they drop to a token level the
+// moment you get out.
+var CAR_FILL = { inCar:{ fill:9.0, key:0.55 }, onFoot:{ fill:0.6, key:0.10 } };
+function carFill(on){
+  var v = on ? CAR_FILL.inCar : CAR_FILL.onFoot;
+  if (CAR.fill) CAR.fill.intensity = v.fill;
+  if (CAR.key)  CAR.key.intensity  = v.key;
+}
+
 function enterCar(){
   MODE = 'car';
+  carFill(true);
   avatarSet(false);
   torch.visible = false;
   CARCAM.yaw = CAR.yaw; CARCAM.idle = 9;
@@ -1208,11 +1227,17 @@ function enterCar(){
 
 function exitCar(){
   MODE = 'foot';
+  carFill(false);
   var rx = Math.cos(CAR.yaw), rz = -Math.sin(CAR.yaw);
   P.pos.set(CAR.pos.x + rx * 1.9, CAR.pos.y + 0.05, CAR.pos.z + rz * 1.9);
   P.vel.set(0, 0, 0); P.vault = null; P.grounded = false;
   avatarSet(true);
   torch.visible = true;
+  // the torch is parented to whatever is holding it. Coming out of the car it
+  // was still on the camera, so the beam hung behind the character's head
+  // instead of pointing where he looks.
+  if (CAM.mode === 'third'){ AV.root.add(torch); AV.root.add(torch.target); }
+  else { camera.add(torch); camera.add(torch.target); }
   AV.root.position.set(P.pos.x, P.pos.y, P.pos.z);
   TOUCH.hand = false;           // never exit with the handbrake stuck on
   UI_SIG = ''; refreshUI();
@@ -2348,11 +2373,13 @@ function reset(full){
       CAR.pos.set(c.x, (c.y || 0) + 0.02, c.z);
       CAR.yaw = c.yaw || 0;
       CARCAM.yaw = CAR.yaw;
+      carFill(true);
       avatarSet(false); torch.visible = false;
       camera.add(torch); camera.add(torch.target);
     } else {
       MODE = 'foot';
       CAR.pos.set(5.6, 0, 12.6); CAR.yaw = 0;
+      carFill(false);
       avatarSet(true); torch.visible = true;
     }
     CAR.vel.set(0, 0, 0); CAR.vy = 0;
@@ -2549,7 +2576,12 @@ function update(dt){
     if (Math.abs(P.pos.x - c.x) < 1.5 && Math.abs(P.pos.z - c.z) < 1.5 && Math.abs(P.pos.y - (c.y||0)) < 0.7) setCP(i);
   }
   var FF = finishPoint();
-  if (Math.abs(P.pos.x - FF.x) < 3.4 && Math.abs(P.pos.z - FF.z) < 3.2 && Math.abs(P.pos.y - (FF.y||0)) < 0.7){
+  // On foot the finish used to count from the moment you stood on it, and in a
+  // car level the start line IS the finish, so getting out before you drove
+  // anything ended the run at 0.00 and called it a new best. Same rule as the
+  // car branch: every marker behind you first.
+  if (G.cp >= FL.length - 1 &&
+      Math.abs(P.pos.x - FF.x) < 3.4 && Math.abs(P.pos.z - FF.z) < 3.2 && Math.abs(P.pos.y - (FF.y||0)) < 0.7){
     finish(); return;
   }
 
