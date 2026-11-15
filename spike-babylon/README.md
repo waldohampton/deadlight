@@ -127,11 +127,14 @@ Timings on this machine, which is **software-rendered** — headless Chrome here
 
 | measurement | value |
 |---|---|
-| first frame, assets cold, localhost | **2.4 s** (1.6 s warm) |
-| render cost, all on, 1376×768 | **8.2 ms/frame** (194 draw calls) |
+| first frame, assets cold, localhost | **2.3 s** (1.6 s warm) |
+| in-page readout, tab foreground, everything on | **60 fps, 10.2 ms/frame** |
+| render cost measured directly, all on, 1376×768 | **8.2 ms/frame** (194 draw calls) |
 | render cost, SSAO2 off | 5.6 ms/frame |
 | render cost, CSM off | 3.8 ms/frame |
-| `engine.getFps()` | meaningless here — the tab is backgrounded and rAF is throttled to 0.6 Hz; frame *cost* above is the honest number |
+
+`engine.getFps()` only means something with the tab foreground; headless CDP leaves it
+backgrounded and rAF throttles to 0.6 Hz, which is why both numbers are reported.
 
 `csm.autoCalcDepthBounds = true` cost **622 ms/frame** on this renderer against **9.3 ms**
 with it off — it re-renders the shadow maps to compute depth bounds every frame. That is
