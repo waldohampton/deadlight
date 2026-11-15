@@ -894,3 +894,39 @@ What is still not the photograph, in order of how much it costs the frame:
    dry brush.
 4. **The car.** Its geometry is the biggest single tell at this framing, and it
    is a scan with no fender flares, no amber light bar and no wide tyres.
+
+## The pyramids were cones
+
+He said the frame looked awful and the pyramids scattered everywhere looked
+stupid. He was right, and they were not decoration: they were the scrub.
+
+1. **1800 five sided cones at 0.85 m.** A five sided cone under a raking sun is
+   a pale pyramid, and 1800 of them spread across a basin is a minefield. They
+   are lumps now, built from a sphere with position-hashed noise so the
+   silhouette is irregular and the seams stay closed, squashed flat, and they
+   come in clumps of one to three with bare ground between. Same for the 900
+   stones, which are 260 clumps now.
+2. **Nothing was in the ground.** Every stone and bush had a hard edge against
+   the plain, which reads as pasted on. There is one instanced plane of radial
+   darkening under all of them, 825 instances, one draw call, no shadow pass.
+3. **The road was asphalt with painted lane dashes.** On a dirt track. The
+   dashes are gone and two compacted tyre tracks are in their place, as a
+   darkening overlay rather than a lit ribbon, because a lit ribbon with no
+   texture renders brighter than the textured road under it and reads as two
+   painted white lines.
+4. **The gates were 7.4 m white frames.** Now 4.6 m of rusted steel with one
+   thin amber strip, which is a thing a desert track would actually have over it.
+5. **A pool of orange light followed the car.** The chase fill was still being
+   driven to 9.0 by `CAR_FILL` when you got in, so a point light four metres
+   behind the car laid a hard edged puddle on the ground that read as a
+   flashlight. Down to 0.35. The car is lit by the sun now.
+6. **The purple line across the sky** was chromatic aberration splitting a one
+   pixel wire into a red fringe and a blue fringe. CA down to 0.0002.
+7. **Reflections.** The sky dome is baked into a PMREM once at load and handed
+   to every standard material with metalness over 0.2, 17 of them. Nothing per
+   frame, and per material rather than `scene.environment`, because a scene wide
+   environment recompiles the materials carrying an `onBeforeCompile` patch.
+
+What is still wrong, and it needs a human eye on the frame rather than another
+number: the car body reads too dark and the environment map is not showing on it
+at this size in frame, and the plain still has no relief. Both are next.

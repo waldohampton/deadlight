@@ -144,7 +144,7 @@ camera.add(torch); camera.add(torch.target); scene.add(camera);
 // shadow at (99,68,18), because a hemisphere fill was carrying a third of the
 // light and filling every crevice. Contrast is bought by taking ambient away.
 // What is left is the sky's own bounce: cool, and small.
-scene.add(new THREE.HemisphereLight(0xa8bccd, 0x2a2320, 0.09));
+scene.add(new THREE.HemisphereLight(0xa8bccd, 0x2a2320, 0.16));
 
 // ---------------------------------------------------------------- sunset
 // The yard is baked at night, so the bake is treated as ambient occlusion and
@@ -220,6 +220,35 @@ sky.frustumCulled = false;
 // standing outside it looking at the dome's edge.
 camera.add(sky);
 sky.position.set(0, 0, 0);
+
+// Reflections, from the sky that is already drawn. A PMREM of the dome costs
+// one precompute at load and nothing per frame, and it is what makes the car
+// body answer to the sunset instead of to a flat fill. Per material, never
+// scene.environment: a scene wide environment recompiles the materials that
+// carry an onBeforeCompile patch and the level goes black.
+var ENVMAP = null;
+function bakeEnv(){
+  if (ENVMAP) return ENVMAP;
+  try {
+    var gen = new THREE.PMREMGenerator(renderer);
+    var es = new THREE.Scene();
+    es.add(new THREE.Mesh(sky.geometry, skyMat));
+    ENVMAP = gen.fromScene(es, 0, 1, 2000).texture;
+    gen.dispose();
+    var n = 0;
+    scene.traverse(function(o){
+      if (!o.isMesh || !o.material) return;
+      var ms = Array.isArray(o.material) ? o.material : [o.material];
+      ms.forEach(function(m){
+        if (m.isMeshStandardMaterial && m.metalness >= 0.2 && !m.envMap){
+          m.envMap = ENVMAP; m.envMapIntensity = 0.85; m.needsUpdate = true; n++;
+        }
+      });
+    });
+    window.__ENVN = n;
+  } catch(e){ ENVMAP = null; }
+  return ENVMAP;
+}
 
 // The photographed sky. Loaded after the gradient is already live, so a failed
 // fetch leaves a sky instead of a black dome. 2:1 equirect, 52 KB at 2048 x
@@ -362,7 +391,10 @@ function pad(name, x, z, hw, hd, top, thick, glow){
   edge.position.y = top + 0.012;
   g.add(edge);
   if (glow){
-    var gl = new THREE.PointLight(0xffc070, glow, 5.0, 2);
+    // the pads' glow is a night marker. In daylight it just lays six little
+    // orange puddles on the ground at the edge of frame, which reads as lamps
+    // left on. The emissive edge strip still shows where the pad is.
+    var gl = new THREE.PointLight(0xffc070, glow * 0.2, 5.0, 2);
     gl.position.set(0, top + 0.4, 0);
     g.add(gl);
   }
@@ -565,14 +597,15 @@ function buildDesertCircuit(){
   for (var i = 1; i < pts.length; i++) dist.push(dist[i-1] + pts[i].distanceTo(pts[i-1]));
   var total = dist[dist.length-1] + pts[pts.length-1].distanceTo(pts[0]);
 
-  function ribbon(halfW, y, uRep){
+  function ribbon(halfW, y, uRep, off){
     var pos = [], uv = [], idx = [];
+    var o = off || 0;
     for (var i = 0; i < pts.length; i++){
       var p = pts[i], q = pts[(i+1) % pts.length];
       var tx = q.x - p.x, tz = q.z - p.z, L = Math.hypot(tx, tz) || 1;
       var sx = -tz / L, sz = tx / L;                 // left of travel
-      pos.push(p.x + sx*halfW, y, p.z + sz*halfW);
-      pos.push(p.x - sx*halfW, y, p.z - sz*halfW);
+      pos.push(p.x + sx*(halfW + o), y, p.z + sz*(halfW + o));
+      pos.push(p.x + sx*(-halfW + o), y, p.z + sz*(-halfW + o));
       uv.push(0, dist[i]/4, uRep, dist[i]/4);
       if (i > 0){
         var a = (i-1)*2, b = a+1, c2 = i*2, d = c2+1;
@@ -602,8 +635,24 @@ function buildDesertCircuit(){
   road.receiveShadow = true;
   g.add(road);
 
-  // centre dashes, every 14 m, 3 m long, faded
+  // tyre tracks instead of lane markings. A dirt track has no paint on it; it
+  // has two compacted strips where every vehicle runs, and removing the dashes
+  // was worth more than adding anything.
   (function(){
+    // a darkening overlay, not a lit strip. A lit strip with no texture comes
+    // out brighter than the textured road under it and reads as two painted
+    // white lines, which is what the first attempt looked like.
+    var trackMat = new THREE.MeshBasicMaterial({color:0x000000, transparent:true,
+      opacity:0.17, depthWrite:false});
+    [-0.80, 0.80].forEach(function(o){
+      var t = new THREE.Mesh(ribbon(0.38, 0.041, 4.0, o), trackMat);
+      t.receiveShadow = true;
+      g.add(t);
+    });
+  })();
+
+  // retired: the painted dashes. Kept so the next person can see what left.
+  if (false) (function(){
     var pos = [], idx = [], n = 0;
     var step = 14;
     for (var d = 20; d < total - 10; d += step){
@@ -719,62 +768,177 @@ function buildDesertCircuit(){
     });
   })();
 
-  // ground clutter. Rocks and scrub as two instanced draws, so thousands of
-  // them cost two draw calls and no extra state changes. This is most of what
-  // separates "a road on a plane" from "a road through a desert".
+  // ground clutter. Rocks, scrub and near pebbles as three instanced draws, so
+  // thousands of them cost three calls and no extra state changes. This is most
+  // of what separates "a road on a plane" from "a road through a desert".
+  //
+  // Two things were wrong with the first version. The bushes were five sided
+  // cones, which at any distance is a pale triangle and reads as a tent; and
+  // everything was scattered on a uniform random radius, which puts props in a
+  // ring around the road forever. Deserts are not uniform: there are bare
+  // patches and there are clumps, and the clumps are what look natural. Both
+  // are fixed here, and the tiny stones are new, because the near ground is
+  // where a chase camera spends its pixels and it had no relief at all.
   (function(){
     var seed = 20261112;
     function rnd(){ seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; }
 
-    var rockGeo = new THREE.IcosahedronGeometry(1, 0);
-    var rockMat = new THREE.MeshStandardMaterial({color:0x54453a, roughness:0.98,
-                                                  metalness:0.0, flatShading:true});
+    // A lump with a stable noise displacement. The noise is a function of the
+    // vertex position, not of the vertex index, so seams stay closed even on a
+    // non indexed geometry.
+    function lump(seg, ring, jag){
+      var geo = new THREE.SphereGeometry(1, seg, ring);
+      var p = geo.attributes.position;
+      for (var i = 0; i < p.count; i++){
+        var x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+        var n = 1.0 + jag * (Math.sin(x * 4.7 + y * 3.1 + z * 6.1) * 0.55 +
+                             Math.sin(x * 9.3 - z * 7.7 + y * 1.9) * 0.45);
+        p.setXYZ(i, x * n, y * n, z * n);
+      }
+      geo.computeVertexNormals();
+      return geo;
+    }
+
+    // clumps, not a ring: pick a centre, then a few things near it. A third of
+    // the centres land in bare ground and hold nothing, which is the point.
+    function clump(n, near, far, fan){
+      var out = [];
+      for (var i = 0; i < n; i++){
+        var pt = pts[Math.floor(rnd() * pts.length)];
+        var ang = rnd() * Math.PI * 2;
+        var rad = near + rnd() * rnd() * far;
+        var cx = pt.x + Math.cos(ang) * rad, cz = pt.z + Math.sin(ang) * rad;
+        var count = Math.floor(rnd() * 4);
+        for (var k = 0; k < count; k++){
+          var a2 = rnd() * Math.PI * 2, r2 = rnd() * fan;
+          out.push({ x: cx + Math.cos(a2) * r2, z: cz + Math.sin(a2) * r2 });
+        }
+      }
+      return out;
+    }
+
+    var rockMat = new THREE.MeshStandardMaterial({color:0x4e433a, roughness:0.98,
+                                                  metalness:0.0, flatShading:false});
     // same stone as the mesas, at boulder scale, so the clutter reads as pieces
-    // of the thing on the horizon instead of grey lumps. The uv of an
-    // icosahedron runs the whole rock, and the scan is 13.9 m of rock face, so
-    // the repeat is pulled under 1 to look at a 1.7 m window of it: at repeat 1
-    // a 1 m rock averages the whole photograph and comes out flat.
+    // of the thing on the horizon instead of grey lumps. The uv of a blob runs
+    // the whole rock, and the scan is 13.9 m of rock face, so the repeat is
+    // pulled under 1 to look at a 1.7 m window of it: at repeat 1 a 1 m rock
+    // averages the whole photograph and comes out flat.
     onRockTex(function(){
       if (ROCKTEX.boulder_col) ROCKTEX.boulder_col.repeat.set(0.15, 0.15);
       rockify(rockMat, 'boulder', 1.2, 0xd2c0b0);
     });
-    var ROCKS = 900;
-    var rocks = new THREE.InstancedMesh(rockGeo, rockMat, ROCKS);
-    rocks.receiveShadow = true;
+
     var mtx = new THREE.Matrix4(), q = new THREE.Quaternion(), eu = new THREE.Euler();
-    var pos = new THREE.Vector3(), scl = new THREE.Vector3();
-    for (var i = 0; i < ROCKS; i++){
-      var pt = pts[Math.floor(rnd() * pts.length)];
-      var ang = rnd() * Math.PI * 2, rad = 11 + rnd() * rnd() * 150;
-      var sc = 0.18 + rnd() * rnd() * 2.4;
-      pos.set(pt.x + Math.cos(ang) * rad, sc * 0.34 - 0.06, pt.z + Math.sin(ang) * rad);
-      eu.set(rnd() * 0.5, rnd() * 6.283, rnd() * 0.5);
+    var pos = new THREE.Vector3(), scl = new THREE.Vector3(), tint = new THREE.Color();
+    var decals = [];
+
+    // boulders: fewer than before, bigger, clustered, and very varied in size so
+    // the eye reads a stone field rather than a repeated prop
+    var rockGeo = lump(9, 7, 0.30);
+    var spots = clump(260, 12, 150, 5.5);
+    var rocks = new THREE.InstancedMesh(rockGeo, rockMat, spots.length);
+    rocks.castShadow = true; rocks.receiveShadow = true;
+    for (var i = 0; i < spots.length; i++){
+      var sc = 0.22 + rnd() * rnd() * 2.2;
+      pos.set(spots[i].x, sc * 0.30 - 0.05, spots[i].z);
+      eu.set(rnd() * 0.4, rnd() * 6.283, rnd() * 0.4);
       q.setFromEuler(eu);
-      scl.set(sc, sc * (0.45 + rnd() * 0.7), sc * (0.8 + rnd() * 0.5));
+      scl.set(sc, sc * (0.5 + rnd() * 0.6), sc * (0.8 + rnd() * 0.5));
       rocks.setMatrixAt(i, mtx.compose(pos, q, scl));
+      var t = 0.34 + rnd() * 0.26;
+      rocks.setColorAt(i, tint.setRGB(t, t * (0.94 + rnd() * 0.1), t * (0.9 + rnd() * 0.12)));
+      decals.push({ x: pos.x, z: pos.z, r: sc * 1.45 });
     }
     rocks.instanceMatrix.needsUpdate = true;
+    if (rocks.instanceColor) rocks.instanceColor.needsUpdate = true;
     g.add(rocks);
 
-    // scrub: five sided tufts, dark and low. Reads as vegetation at distance
-    // without a single alpha texture or a shadow pass.
-    var bushGeo = new THREE.ConeGeometry(0.62, 0.85, 5, 1);
-    var bushMat = new THREE.MeshStandardMaterial({color:0x3f4029, roughness:1.0,
-                                                  metalness:0.0, flatShading:true});
-    var BUSH = 1800;
-    var bush = new THREE.InstancedMesh(bushGeo, bushMat, BUSH);
-    for (var j = 0; j < BUSH; j++){
-      var bt = pts[Math.floor(rnd() * pts.length)];
-      var ba = rnd() * Math.PI * 2, br = 10 + rnd() * rnd() * 130;
-      var bs = 0.5 + rnd() * 1.1;
-      pos.set(bt.x + Math.cos(ba) * br, bs * 0.42 - 0.05, bt.z + Math.sin(ba) * br);
+    // scrub: a squashed lump, not a cone, and only in clumps. Dry brush in the
+    // reference frame is low, dark and irregular; a pale five sided cone is
+    // none of those three things.
+    var bushGeo = lump(7, 5, 0.42);
+    // dead brush in this country is grey brown, not green. The green ones read
+    // as jellybeans on sand, which is exactly what they were.
+    var bushMat = new THREE.MeshStandardMaterial({color:0x4f4c31, roughness:1.0,
+                                                  metalness:0.0, flatShading:false});
+    var bspot = clump(300, 9, 120, 3.2);
+    var bush = new THREE.InstancedMesh(bushGeo, bushMat, bspot.length);
+    bush.receiveShadow = true;
+    for (var j = 0; j < bspot.length; j++){
+      var bs = 0.36 + rnd() * rnd() * 1.05;
+      pos.set(bspot[j].x, bs * 0.30, bspot[j].z);
       eu.set(0, rnd() * 6.283, 0);
       q.setFromEuler(eu);
-      scl.set(bs, bs * (0.7 + rnd() * 0.8), bs);
+      scl.set(bs * (0.85 + rnd() * 0.5), bs * (0.42 + rnd() * 0.3), bs * (0.85 + rnd() * 0.5));
       bush.setMatrixAt(j, mtx.compose(pos, q, scl));
+      var bt = 0.50 + rnd() * 0.30;
+      bush.setColorAt(j, tint.setRGB(bt, bt * 0.94, bt * 0.80));
+      decals.push({ x: pos.x, z: pos.z, r: bs * 1.7 });
     }
     bush.instanceMatrix.needsUpdate = true;
+    if (bush.instanceColor) bush.instanceColor.needsUpdate = true;
     g.add(bush);
+
+    // Contact shading under every stone and bush. Without it they hover: the
+    // composite's screen space occlusion is too coarse to catch a 20 cm stone,
+    // and a rock with no dark where it meets the ground is the single clearest
+    // "pasted on" tell. One instanced draw for all of them.
+    (function(){
+      var cv = document.createElement('canvas'); cv.width = cv.height = 64;
+      var cx2 = cv.getContext('2d');
+      var grd = cx2.createRadialGradient(32, 32, 0, 32, 32, 32);
+      grd.addColorStop(0.0, 'rgba(0,0,0,0.75)');
+      grd.addColorStop(0.55, 'rgba(0,0,0,0.35)');
+      grd.addColorStop(1.0, 'rgba(0,0,0,0)');
+      cx2.fillStyle = grd; cx2.fillRect(0, 0, 64, 64);
+      var tex = new THREE.CanvasTexture(cv);
+      tex.encoding = THREE.LinearEncoding;
+      var dGeo = new THREE.PlaneGeometry(1, 1);
+      dGeo.rotateX(-Math.PI / 2);
+      var dMat = new THREE.MeshBasicMaterial({map: tex, transparent: true,
+        depthWrite: false, color: 0x000000, opacity: 0.85});
+      var dm = new THREE.InstancedMesh(dGeo, dMat, decals.length);
+      dm.renderOrder = 1;
+      for (var n2 = 0; n2 < decals.length; n2++){
+        var dd = decals[n2];
+        pos.set(dd.x, 0.045, dd.z);
+        q.setFromEuler(eu.set(0, 0, 0));
+        scl.set(dd.r * 2, 1, dd.r * 2);
+        dm.setMatrixAt(n2, mtx.compose(pos, q, scl));
+      }
+      dm.instanceMatrix.needsUpdate = true;
+      dm.frustumCulled = false;
+      g.add(dm);
+    })();
+
+    // near stones. The bottom third of a chase frame is ground at two to twenty
+    // metres and it was a flat photograph of sand; the reference has a stone
+    // every few centimetres there, each with its own lit top. No shadows on
+    // these, they are too small to matter and there are thousands.
+    var pebGeo = lump(5, 4, 0.5);
+    // their own material, untextured and dark. Sharing the boulder material made
+    // five thousand little bright chips that read as glowing white stones.
+    var pebMat = new THREE.MeshStandardMaterial({color:0x4a4136, roughness:1.0,
+                                                 metalness:0.0, flatShading:false});
+    var PEBS = 3600;
+    var pebs = new THREE.InstancedMesh(pebGeo, pebMat, PEBS);
+    pebs.receiveShadow = true;
+    for (var k2 = 0; k2 < PEBS; k2++){
+      var pt2 = pts[Math.floor(rnd() * pts.length)];
+      var a3 = rnd() * Math.PI * 2, r3 = 3.5 + rnd() * rnd() * 26;
+      var ps = 0.05 + rnd() * rnd() * 0.22;
+      pos.set(pt2.x + Math.cos(a3) * r3, ps * 0.28, pt2.z + Math.sin(a3) * r3);
+      eu.set(rnd() * 0.6, rnd() * 6.283, rnd() * 0.6);
+      q.setFromEuler(eu);
+      scl.set(ps, ps * (0.5 + rnd() * 0.5), ps * (0.8 + rnd() * 0.4));
+      pebs.setMatrixAt(k2, mtx.compose(pos, q, scl));
+      var pt3 = 0.55 + rnd() * 0.4;
+      pebs.setColorAt(k2, tint.setRGB(pt3, pt3 * 0.97, pt3 * 0.93));
+    }
+    pebs.instanceMatrix.needsUpdate = true;
+    if (pebs.instanceColor) pebs.instanceColor.needsUpdate = true;
+    g.add(pebs);
   })();
 
   scene.add(g);
@@ -851,19 +1015,31 @@ scene.add(MARKER_GROUP);
     // in the air from a chase camera, which is what looked like stray lights.
     if (LEVEL.mode === 'car' && c.yaw !== undefined){
       var px = Math.cos(c.yaw), pz = -Math.sin(c.yaw);   // across the road
-      var ARCH = {color:0x2c2214, emissive:0xffa63a, emissiveIntensity:0.85,
-                  roughness:0.5, metalness:0.1};
-      var archMat = new THREE.MeshStandardMaterial(ARCH);
-      var postGeo = new THREE.BoxGeometry(0.42, 7.4, 0.42);
+      // Rusted steel, four and a half metres, not a seven metre white frame.
+      // The bright pale arch was the most artificial thing in the frame: real
+      // desert tracks have an old gate over them, and the glow belongs on one
+      // thin strip, not on the whole structure.
+      var archMat = new THREE.MeshStandardMaterial({color:0x3c2c20, roughness:0.82,
+                                                    metalness:0.28});
+      var stripMat = new THREE.MeshStandardMaterial({color:0x241708, emissive:0xffb04a,
+                                                     emissiveIntensity:0.32, roughness:0.7});
+      var postGeo = new THREE.BoxGeometry(0.30, 4.6, 0.30);
       [-1, 1].forEach(function(s){
         var post = new THREE.Mesh(postGeo, archMat);
-        post.position.set(c.x + px * 6.4 * s, 3.7, c.z + pz * 6.4 * s);
+        post.position.set(c.x + px * 6.0 * s, 2.3, c.z + pz * 6.0 * s);
+        post.rotation.y = Math.atan2(px, pz);
+        post.castShadow = true;
         MARKER_GROUP.add(post);
       });
-      var beam = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.46, 13.2), archMat);
-      beam.position.set(c.x, 7.2, c.z);
+      var beam = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.34, 12.3), archMat);
+      beam.position.set(c.x, 4.5, c.z);
       beam.rotation.y = Math.atan2(px, pz);
+      beam.castShadow = true;
       MARKER_GROUP.add(beam);
+      var strip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.10, 11.4), stripMat);
+      strip.position.set(c.x, 4.30, c.z);
+      strip.rotation.y = Math.atan2(px, pz);
+      MARKER_GROUP.add(strip);
       // a thin line on the tarmac so you can see the trigger point
       var lick = new THREE.Mesh(new THREE.PlaneGeometry(12.6, 0.34),
                                 new THREE.MeshStandardMaterial({color:0x2a2014, emissive:0xc07a2a,
@@ -953,7 +1129,9 @@ var MODE = 'foot';
   part(B(0.52, 0.10, 0.06), tailMat, -0.58, 0.72,  2.27);
   part(B(0.52, 0.10, 0.06), tailMat,  0.58, 0.72,  2.27);
 
-  var beam = new THREE.SpotLight(0xffe9c4, 7.0, 60, 0.72, 0.60, 0.85);
+  // 7.0 laid a hot white pool thirty metres down the road in daylight, which
+  // read as a flashlight rather than as headlights
+  var beam = new THREE.SpotLight(0xffe9c4, 3.2, 60, 0.72, 0.60, 0.85);
   beam.position.set(0, 0.70, -1.90);
   beam.target.position.set(0, 0.10, -20);
   beam.castShadow = true;
@@ -1325,7 +1503,12 @@ function nearCar(){
 // Standing at the door they light the walking body instead, which is how a
 // white shirt ends up as a white blob, so they drop to a token level the
 // moment you get out.
-var CAR_FILL = { inCar:{ fill:9.0, key:0.55 }, onFoot:{ fill:0.6, key:0.10 } };
+// The car does not need to be lit by a lamp any more. The fill at 9.0 was
+// carrying the whole frame, and a point light 4 m behind the car lays a hard
+// edged orange pool on the ground that made the shot look lit by a flashlight.
+// The sun lights the car now; this is only here so the back of the car is not
+// a pure black hole when the sun is on the other side.
+var CAR_FILL = { inCar:{ fill:0.35, key:0.16 }, onFoot:{ fill:0.15, key:0.06 } };
 function carFill(on){
   var v = on ? CAR_FILL.inCar : CAR_FILL.onFoot;
   if (CAR.fill) CAR.fill.intensity = v.fill;
@@ -2362,7 +2545,7 @@ var POST = (function(){
       tDepth:{value:null}, uRes:{value:new THREE.Vector2(1,1)},
       uAO:{value:0.90}, uNear:{value:0.05}, uFar:{value:300}, uProj:{value:800},
       uTime:{value:0}, uBloom:{value:0.30}, uExposure:{value:1.02},
-      uGrain:{value:0.010}, uVig:{value:0.45}, uCA:{value:0.0008},
+      uGrain:{value:0.010}, uVig:{value:0.45}, uCA:{value:0.0002},
       uToe:{value:0.10}, uShoulder:{value:0.55}, uSat:{value:1.05}
     },
     vertexShader: vert,
@@ -2760,6 +2943,10 @@ window.addEventListener('resize', function(){
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   POST.resize();
 });
+
+// bake the sky into the environment map once everything that wants it exists.
+// Delayed rather than done inline because the glb and the sky jpeg land later.
+setTimeout(function(){ bakeEnv(); }, 2200);
 
 window.COURSE = {
   TUNE: TUNE,
