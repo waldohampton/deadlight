@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>deadlight — babylon spike (phase one: light)</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0a09;overflow:hidden}
+  canvas{width:100%;height:100%;display:block;outline:none;touch-action:none}
+  #hud{position:fixed;left:10px;top:10px;padding:7px 9px;border-radius:3px;
+       background:rgba(8,7,6,.72);color:#d9d2c4;font:11px/1.45 ui-monospace,Menlo,Consolas,monospace;
+       white-space:pre;pointer-events:none;letter-spacing:.02em}
+  #err{position:fixed;left:0;right:0;bottom:0;max-height:45%;overflow:auto;display:none;
+       background:#3a0d08;color:#ffd9cf;font:12px/1.5 ui-monospace,monospace;padding:10px 12px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"></div>
+<div id="err"></div>
+
+<!-- vendored UMD builds, no CDN at runtime -->
+<script src="babylon.js"></script>
+<script src="babylonjs.loaders.min.js"></script>
+<script>
+(function(){
+'use strict';
+
+var T_START = performance.now();
+var Q = new URLSearchParams(location.search);
+function qn(k, d){ var v = Q.get(k); return v === null ? d : parseFloat(v); }
+function qb(k, d){ var v = Q.get(k); return v === null ? d : (v !== '0'); }
+
+var errBox = document.getElementById('err');
+var ERRORS = [];
+function fail(where, e){
+  var msg = where + ': ' + (e && (e.stack || e.message) || e);
+  ERRORS.push(msg);
+  errBox.style.display = 'block';
+  errBox.textContent = ERRORS.join('\n\n');
+  console.error('[spike]', msg);
+}
+window.addEventListener('error', function(ev){ fail('window.error', ev.error || ev.message); });
+window.addEventListener('unhandledrejection', function(ev){ fail('unhandledrejection', ev.reason); });
+
+// ---------------------------------------------------------------- photometry
+// Same calibration as course.html, expressed in Babylon's units:
+//   DirectionalLight.intensity  = illuminance in lux (Babylon resolves
+//     INTENSITYMODE_AUTOMATIC to ILLUMINANCE for directional lights, divisor 1;
+//     verified in the bundle: `case LIGHTTYPEID_DIRECTIONALLIGHT: case
+//     INTENSITYMODE_ILLUMINANCE: t = 1`)
+//   HDRI                         = luminance in cd/m2 (re-encoded, see README)
+//   scene.imageProcessingConfiguration.exposure = the camera
+// 15,000 lux at 14 deg elevation on 0.30 albedo ground:
+//   15000 * sin(14) * 0.30 / PI = 346 cd/m2 before the curve.
+var SUN_LUX   = 15000;
+var SUN_HEX   = '#ffdcae';
+var SUN_EL    = 14 * Math.PI / 180;    // degrees above the horizon
+var SUN_AZ    = 46 * Math.PI / 180;    // degrees clockwise from +Z: sun ahead-right,
+                                       // just outside the right edge of the frame
+var SKY_CD    = 900;                   // cd/m2 mid-sky, the calibration target
+var IBL_FACTOR = qn('env', 1.0);       // 1 = the HDRI's real irradiance; it is left
+                                       // there because it measures right, not because
+                                       // full strength was assumed (=0.55 read as black)
+var EXPOSURE  = qn('e', 0.00073);
+
+// Sun direction: the unit vector TOWARD the sun. Babylon's light.direction is
+// the direction the photons travel, so it is the negative of this.
+var SUN_DIR = new BABYLON.Vector3(
+  Math.cos(SUN_EL) * Math.sin(SUN_AZ),
+  Math.sin(SUN_EL),
+  Math.cos(SUN_EL) * Math.cos(SUN_AZ)
+);
+
+// ---------------------------------------------------------------- engine
+var canvas = document.getElementById('c');
+var engine = new BABYLON.Engine(canvas, true, {
+  preserveDrawingBuffer: true,   // so a screenshot of the canvas is not blank
+  stencil: true,
+  powerPreference: 'high-performance',
+  doNotHandleContextLost: false
+}, true);
+engine.setHardwareScalingLevel(1);
+engine.resize();
+
+var scene = new BABYLON.Scene(engine);
+scene.clearColor = new BABYLON.Color4(0.02, 0.02, 0.025, 1);
+scene.ambientColor = new BABYLON.Color3(0, 0, 0);   // no ambient: the sky is the ambient
+scene.useRightHandedSystem = false;
+
+// one camera, fixed, matching the reference framing. fov is vertical: the
+// reference is 1376x768 and reads like a ~36 deg vertical lens.
+var camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(qn('cx', -1.55), qn('cy', 1.92), qn('cz', -7.35)), scene);
+camera.fovMode = BABYLON.Camera.FOVMODE_VERTICAL_FIXED;
+camera.fov = qn('fov', 0.63);
+camera.minZ = 0.12;
+camera.maxZ = 4000;
+camera.setTarget(new BABYLON.Vector3(qn('tx', 0.75), qn('ty', 1.02), qn('tz', 6.0)));
+
+// ---------------------------------------------------------------- tone map
+var ip = scene.imageProcessingConfiguration;
+ip.toneMappingEnabled = true;
+ip.toneMappingType = BABYLON.ImageProcessingConfiguration.TONEMAPPING_ACES;
+ip.exposure = EXPOSURE;
+ip.contrast = 1.0;
+ip.vignetteEnabled = false;
+ip.ditheringEnabled = false;
+ip.colorCurvesEnabled = false;
+
+// ---------------------------------------------------------------- sun
+var sun = new BABYLON.DirectionalLight('sun', SUN_DIR.scale(-1), scene);
+sun.intensity = SUN_LUX;
+sun.diffuse = BABYLON.Color3.FromHexString(SUN_HEX);
+sun.specular = BABYLON.Color3.FromHexString(SUN_HEX);
+sun.intensityMode = BABYLON.Light.INTENSITYMODE_ILLUMINANCE;  // explicit, not implied
+sun.position = SUN_DIR.scale(260);   // the sun sits 260 m up-sun; CSM wants a position
+sun.shadowMinZ = 1;
+sun.shadowMaxZ = 520;
+sun.autoUpdateExtends = false;
+
+// Cascaded Shadow Maps: four cascades, PCF, 2k each. This is the feature the
+// three.js build hand-rolled a single 34 m box for.
+var csm = new BABYLON.CascadedShadowGenerator(2048, sun);
+csm.lambda = 0.82;
+csm.numCascades = 4;
+csm.cascadeBlendPercentage = 0.08;
+csm.stabilizeCascades = true;
+csm.depthClamp = true;
+csm.shadowMaxZ = 480;
+// autoCalcDepthBounds re-renders the shadow maps to find the depth range every
+// frame: 622 ms/frame on this machine's software GL against 9 ms with it off.
+// shadowMaxZ plus stabilized cascades is enough for a fixed camera.
+csm.autoCalcDepthBounds = false;
+csm.usePercentageCloserFiltering = true;
+csm.filteringQuality = BABYLON.ShadowGenerator.QUALITY_MEDIUM;
+csm.bias = 0.0016;
+csm.normalBias = 0.018;
+csm.darkness = 0.0;
+
+// ---------------------------------------------------------------- fog
+// Haze is a medium, not a light. In three.js it was being used to disguise a
+// black shadow side. Here it is only atmosphere, and its colour is the sky
+// radiance at the horizon so distance does not fade to a colour the sky does
+// not have. Values are cd/m2 because fog is applied before the tone curve.
+scene.fogMode = BABYLON.Scene.FOGMODE_LINEAR;
+scene.fogStart = 60;
+scene.fogEnd = qn('fogend', 900);
+scene.fogColor = new BABYLON.Color3(0.360, 0.300, 0.240);   // ~ (340,285,228) cd/m2
+
+// ---------------------------------------------------------------- sky + IBL
+// One HDRCubeTexture, used twice: as the visible sky (BackgroundMaterial
+// samples mip 0, which is the sharp equirect) and as the prefiltered
+// environment that lights every PBR material. Two HDRCubeTextures from the
+// same URL raced each other and one failed to parse, so it is one file, one
+// decode. The HDRI is re-encoded so 1 unit = 1 cd/m2 (mid-sky measured 896).
+var skyReady = false;
+var iblEnv = new BABYLON.HDRCubeTexture('qwantani_sunset_2k_cd.hdr', scene, 256, false, true, false, false, true,
+  function(){ skyReady = true; checkReady(); },
+  function(m){ fail('HDRCubeTexture', m); });
+scene.environmentTexture = iblEnv;
+scene.environmentIntensity = IBL_FACTOR;       // one dial between "no fill" and "full sky"
+
+// the box must sit inside camera.maxZ or the far plane eats it; 2000 m with
+// infiniteDistance keeps the faces 1000 m from the eye at every position
+var skybox = BABYLON.MeshBuilder.CreateBox('sky', { size: 2000 }, scene);
+skybox.infiniteDistance = true;
+skybox.isPickable = false;
+// BackgroundMaterial (the obvious choice) rendered this HDRI as pure black in
+// v9.35 even with the cube ready and SKYBOX_MODE set; a StandardMaterial with
+// lighting off and only a reflection does the job, which is the old Babylon
+// skybox recipe. Cost: one extra material, and fog has to be switched off on it
+// by hand or the horizon washes into the haze.
+var skyMat = new BABYLON.StandardMaterial('skyMat', scene);
+skyMat.disableLighting = true;
+skyMat.backFaceCulling = false;
+skyMat.diffuseColor = BABYLON.Color3.Black();
+skyMat.specularColor = BABYLON.Color3.Black();
+skyMat.emissiveColor = BABYLON.Color3.Black();
+skyMat.ambientColor = BABYLON.Color3.Black();
+skyMat.fogEnabled = false;
+// clone so the skybox's coordinates mode does not change how the PBR IBL
+// samples the same GPU texture
+skyMat.reflectionTexture = iblEnv.clone();
+skyMat.reflectionTexture.coordinatesMode = BABYLON.Texture.SKYBOX_MODE;
+// The HDRI's sun sits 10 deg left of the light in the file, so the dome is
+// yawed to put the photographed sun where the DirectionalLight points. It is
+// off the right edge of frame, which is why the key light reads as backlight
+// with a warm glow at the edge, the same shape as the reference photograph.
+skybox.rotation.y = 0.35;
+// The visible dome is graded 0.62 while the IBL keeps the full 900 cd/m2:
+// the HDRI's near-sun glow is three stops above its sky mean and ACES leaves
+// it at 200+, which pushed the frame's mean 25 points above the reference.
+// This is a grade on a backdrop, not a change to the light, and it is one
+// texture level rather than three.js's whole hand-written sky shader.
+skyMat.reflectionTexture.level = 0.62;
+skybox.material = skyMat;
+
+// ---------------------------------------------------------------- ground
+var GROUND_ALBEDO = qn('albedo', 1.0);
+function pbr(name, texUrl, tileM, sizeM, opts){
+  var m = new BABYLON.PBRMaterial(name, scene);
+  m.metallic = 0;
+  m.roughness = 1.0;
+  m.albedoColor = new BABYLON.Color3(1, 1, 1);
+  if (texUrl){
+    var t = new BABYLON.Texture(texUrl, scene, false, false, BABYLON.Texture.TRILINEAR_SAMPLINGMODE);
+    t.gammaSpace = true;                       // sRGB albedo -> linear
+    t.anisotropicFilteringLevel = 8;
+    var s = sizeM / tileM;
+    t.uScale = s; t.vScale = s;
+    m.albedoTexture = t;
+  }
+  if (opts && opts.nrm){
+    var n = new BABYLON.Texture(opts.nrm, scene, false, false, BABYLON.Texture.TRILINEAR_SAMPLINGMODE);
+    n.gammaSpace = false;
+    n.anisotropicFilteringLevel = 8;
+    var s2 = (opts.nrmSize || sizeM) / tileM;
+    n.uScale = s2; n.vScale = s2;
+    if (opts.invertY) n.invertNormalMapY = true;
+    m.bumpTexture = n;
+  }
+  m.usePhysicalLightFalloff = true;
+  m.environmentIntensity = 1.0;
+  return m;
+}
+
+var GROUND_SIZE = 2600;      // metres
+var groundMat = pbr('ground', '../models/tex/gravel_col.jpg', 16.0, GROUND_SIZE,
+                    { nrm: '../models/tex/gravel_nrm.jpg' });
+groundMat.albedoColor = new BABYLON.Color3(GROUND_ALBEDO, GROUND_ALBEDO, GROUND_ALBEDO);
+var ground = BABYLON.MeshBuilder.CreateGround('ground', { width: GROUND_SIZE, height: GROUND_SIZE, subdivisions: 2 }, scene);
+ground.material = groundMat;
+ground.receiveShadows = true;
+
+// ---------------------------------------------------------------- road
+// A ribbon, built by hand because CreateRibbon's own UV layout does not give
+// a distance-parameterised tile. Same trick as course.html: cumulative arc
+// length drives u, so the gravel is a fixed physical size however the road
+// bends.
+function roadCenterX(z){ return 5.5 * Math.sin((z - 30) / 150) - 1.0; }
+function buildRibbon(halfW, y, tileM, tint){
+  var z0 = -90, z1 = 1400, N = 130;
+  var pos = [], nrm = [], uv = [], idx = [], dist = [0];
+  for (var i = 0; i <= N; i++){
+    var z = z0 + (z1 - z0) * i / N;
+    var x = roadCenterX(z);
+    var dxdz = 5.5 / 150 * Math.cos((z - 30) / 150);
+    var len = Math.sqrt(1 + dxdz * dxdz);
+    var sx = 1 / len, sz = -dxdz / len;   // sideways, perpendicular to travel
+    pos.push(x - sx * halfW, y, z - sz * halfW);
+    pos.push(x + sx * halfW, y, z + sz * halfW);
+    nrm.push(0, 1, 0, 0, 1, 0);
+    if (i > 0){
+      var dz = (z1 - z0) / N;
+      dist.push(dist[i - 1] + dz * len);
+    }
+    var u = dist[i] / tileM;
+    // both axes in tile units: the strip is 2*halfW metres wide, so v only
+    // covers that fraction of one tile. v = 0..1 over the width stretched the
+    // texture 20:1 and the road read as a flat beige ramp.
+    uv.push(u, 0, u, (2 * halfW) / tileM);
+  }
+  for (var j = 0; j < N; j++){
+    var a = j * 2, b = a + 1, c = a + 2, d = a + 3;
+    idx.push(a, b, c, b, d, c);
+  }
+  var mesh = new BABYLON.Mesh('ribbon', scene);
+  var vd = new BABYLON.VertexData();
+  vd.positions = pos; vd.normals = nrm; vd.uvs = uv; vd.indices = idx;
+  vd.applyToMesh(mesh, false);
+  mesh.material = tint;
+  mesh.receiveShadows = true;
+  mesh.isPickable = false;
+  return mesh;
+}
+// The ribbon's UVs already carry the tiling (u = metres / tile size), so the
+// textures must NOT also be scaled by the mesh size: pbr() sets uScale =
+// size/tile for the ground plane, and 2600/5 = 520 on top of the ribbon UVs
+// turned the road into a sub-pixel mush that averaged out to flat brown.
+function unscale(mat){
+  if (mat.albedoTexture){ mat.albedoTexture.uScale = 1; mat.albedoTexture.vScale = 1; }
+  if (mat.bumpTexture){ mat.bumpTexture.uScale = 1; mat.bumpTexture.vScale = 1; }
+  return mat;
+}
+var shoulderMat = unscale(pbr('shoulder', '../models/tex/road_col.jpg', 9.0, GROUND_SIZE,
+                      { nrm: '../models/tex/road_nrm.jpg' }));
+shoulderMat.albedoColor = new BABYLON.Color3(0.62, 0.57, 0.49);
+buildRibbon(7.0, 0.03, 9.0, shoulderMat);
+
+var roadMat = unscale(pbr('road', '../models/tex/road_col.jpg', 5.0, GROUND_SIZE,
+                 { nrm: '../models/tex/road_nrm.jpg' }));
+roadMat.albedoColor = new BABYLON.Color3(0.46, 0.42, 0.36);
+buildRibbon(4.1, 0.06, 5.0, roadMat);
+
+// ---------------------------------------------------------------- mesas
+// Big flat faces on the far side of the sun. This is the exact thing that came
+// out as a black slab in three.js.
+var mesaDefs = [
+  { x: -150, z: 330, d: 120, h: 54,  rot: 0.3 },
+  { x:   60, z: 430, d: 165, h: 72,  rot: 1.1 },
+  { x:  250, z: 540, d: 190, h: 44,  rot: 2.4 },
+  { x: -330, z: 620, d: 210, h: 90,  rot: 0.8 },
+  { x:  420, z: 760, d: 240, h: 62,  rot: 1.7 }
+];
+var mesaBase = pbr('cliff', '../models/tex/cliff_col.jpg', 18.3, 100,
+                   { nrm: '../models/tex/cliff_nrm.jpg', invertY: true });
+mesaDefs.forEach(function(md, i){
+  var mesh = BABYLON.MeshBuilder.CreateCylinder('mesa' + i, {
+    height: md.h, diameterTop: md.d * 0.80, diameterBottom: md.d * 1.16,
+    tessellation: 18, cap: BABYLON.Mesh.CAP_ALL
+  }, scene);
+  mesh.position.set(md.x, md.h / 2 - 3, md.z);
+  mesh.rotation.y = md.rot;
+  var m = mesaBase.clone('cliff' + i);
+  var circ = Math.PI * (md.d * 0.98);
+  m.albedoTexture = mesaBase.albedoTexture.clone();
+  m.albedoTexture.uScale = circ / 18.3;
+  m.albedoTexture.vScale = md.h / 18.3;
+  m.bumpTexture = mesaBase.bumpTexture.clone();
+  m.bumpTexture.uScale = circ / 18.3;
+  m.bumpTexture.vScale = md.h / 18.3;
+  m.albedoColor = new BABYLON.Color3(1.35, 1.28, 1.18);   // the scanned cliff is a dark
+  // basalt brown; lifted so the sky-lit face reads, the same trick course.html used
+  mesh.material = m;
+  mesh.receiveShadows = true;
+  csm.addShadowCaster(mesh);
+});
+
+// ---------------------------------------------------------------- rocks
+// 120 instanced boulders. One draw call for the lot, and CSM shadows them.
+var rockMat = pbr('boulder', '../models/tex/boulder_col.jpg', 13.9, 4,
+                  { nrm: '../models/tex/boulder_nrm.jpg', invertY: true });
+var rock = BABYLON.MeshBuilder.CreateIcoSphere('rock', { radius: 1, subdivisions: 2, flat: true }, scene);
+rock.material = rockMat;
+rock.receiveShadows = true;
+rock.isVisible = false;
+function rng(seed){ return function(){ seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+  var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+var rnd = rng(20261115);
+var ROCKS = qn('rocks', 120);
+for (var ri = 0; ri < ROCKS; ri++){
+  var rz = -60 + rnd() * 460;
+  var rx = roadCenterX(rz) + (rnd() < 0.5 ? -1 : 1) * (8 + rnd() * 150);
+  var s = 0.25 + Math.pow(rnd(), 2.2) * 3.4;
+  var inst = rock.createInstance('rock' + ri);
+  inst.position.set(rx, s * 0.32, rz);
+  inst.scaling.set(s * (0.7 + rnd() * 0.7), s * (0.5 + rnd() * 0.5), s * (0.7 + rnd() * 0.6));
+  inst.rotation.set(rnd() * 3.14, rnd() * 6.28, rnd() * 3.14);
+  inst.isPickable = false;
+  csm.addShadowCaster(inst);
+}
+
+// ---------------------------------------------------------------- car
+// The car the game actually drives (course.html's Calder Arrow: 4 wheels at
+// r=0.36 on y=0.36, 3.9 m long, dish on the roof). Rebuilt in Babylon PBR.
+function mat(name, hex, rough, metal, emis){
+  var m = new BABYLON.PBRMaterial(name, scene);
+  m.albedoColor = BABYLON.Color3.FromHexString(hex);
+  m.metallic = metal; m.roughness = rough;
+  m.environmentIntensity = 1.0;
+  if (emis) m.emissiveColor = emis;
+  return m;
+}
+var BODY  = mat('body',  '#4a5057', 0.44, 0.35);
+var TRIM  = mat('trim',  '#2f3338', 0.42, 0.65);
+var GLASS = mat('glass', '#0b1013', 0.16, 0.72);
+var TYRE  = mat('tyre',  '#141517', 0.94, 0.00);
+var RIM   = mat('rim',   '#484d54', 0.38, 0.85);
+var DISH  = mat('dish',  '#c9c7bd', 0.44, 0.10);
+var TAIL  = mat('tail',  '#2a0703', 0.30, 0.0, new BABYLON.Color3(1800, 26, 8));   // cd/m2, not 0..1
+var AMBER = mat('amber', '#3a2503', 0.35, 0.0, new BABYLON.Color3(900, 420, 90));
+
+var car = new BABYLON.TransformNode('car', scene);
+car.position.set(0, 0, 0);
+car.rotation.y = 0;   // nose toward +Z, away from camera
+
+function box(name, w, h, d, x, y, z, material, parent){
+  var b = BABYLON.MeshBuilder.CreateBox(name, { width: w, height: h, depth: d }, scene);
+  b.position.set(x, y, z);
+  b.material = material;
+  b.parent = parent || car;
+  b.receiveShadows = true;
+  csm.addShadowCaster(b);
+  return b;
+}
+box('body',   1.86, 0.46, 3.30, 0, 0.60,  0.45, BODY);
+box('nose',   1.80, 0.30, 1.35, 0, 0.52, -1.60, BODY);
+box('hood',   1.70, 0.16, 0.90, 0, 0.77, -1.95, BODY);
+box('cabin',  1.62, 0.42, 1.55, 0, 1.02,  0.10, BODY);
+var ws = box('windshield', 1.50, 0.50, 0.07, 0, 0.98, -0.70, GLASS); ws.rotation.x = -0.52;
+var rg = box('rearglass',  1.46, 0.42, 0.07, 0, 1.00,  0.92, GLASS); rg.rotation.x =  0.46;
+box('tailpanel', 1.86, 0.22, 0.24, 0, 0.70, 2.14, BODY);
+box('roofline',  0.90, 0.05, 3.90, 0, 0.86, 0.00, TRIM);
+box('sillL', 0.07, 0.07, 2.70, -0.94, 0.44, 0.20, AMBER);
+box('sillR', 0.07, 0.07, 2.70,  0.94, 0.44, 0.20, AMBER);
+box('tailL', 0.52, 0.10, 0.06, -0.58, 0.72, 2.27, TAIL);
+box('tailR', 0.52, 0.10, 0.06,  0.58, 0.72, 2.27, TAIL);
+
+// wheels: bottom of tyre exactly at y = 0
+var WHEEL_R = 0.36, WHEEL_W = 0.26;
+[[-0.90, -1.42], [0.90, -1.42], [-0.90, 1.42], [0.90, 1.42]].forEach(function(p, i){
+  var w = BABYLON.MeshBuilder.CreateCylinder('wheel' + i, { height: WHEEL_W, diameter: WHEEL_R * 2, tessellation: 20 }, scene);
+  w.rotation.z = Math.PI / 2;
+  w.position.set(p[0], WHEEL_R, p[1]);
+  w.material = TYRE; w.parent = car;
+  w.receiveShadows = true; csm.addShadowCaster(w);
+  var hub = BABYLON.MeshBuilder.CreateCylinder('hub' + i, { height: WHEEL_W + 0.02, diameter: WHEEL_R * 1.15, tessellation: 16 }, scene);
+  hub.rotation.z = Math.PI / 2;
+  hub.position.set(p[0], WHEEL_R, p[1]);
+  hub.material = RIM; hub.parent = car;
+  csm.addShadowCaster(hub);
+});
+
+// the dish: mast, concave face, rim, feed arm
+box('mast', 0.09, 0.46, 0.09, 0, 1.40, 1.05, TRIM);
+var dish = BABYLON.MeshBuilder.CreateCylinder('dish', { height: 0.16, diameterTop: 0.92, diameterBottom: 0.26, tessellation: 24 }, scene);
+dish.position.set(0, 1.60, 1.05); dish.rotation.x = -0.55; dish.material = DISH; dish.parent = car;
+csm.addShadowCaster(dish);
+var drim = BABYLON.MeshBuilder.CreateTorus('drim', { diameter: 0.92, thickness: 0.045, tessellation: 28 }, scene);
+drim.position.set(0, 1.60, 1.05); drim.rotation.x = -0.55 + Math.PI / 2; drim.material = TRIM; drim.parent = car;
+csm.addShadowCaster(drim);
+box('feed', 0.024, 0.34, 0.024, 0, 1.70, 0.95, TRIM).rotation.x = -0.55;
+
+// contact shadow: CSM alone leaves the car looking slightly pasted on at this
+// sun angle; three.js used a blob. Babylon can do it without a shader, but the
+// point of the spike is to see what the sun and the sky do by themselves, so
+// this stays off by default.
+if (qb('blob', false)){
+  var blobTex = new BABYLON.DynamicTexture('blob', { width: 128, height: 128 }, scene, false);
+  var bc = blobTex.getContext();
+  var grd = bc.createRadialGradient(64, 64, 4, 64, 64, 62);
+  grd.addColorStop(0, 'rgba(0,0,0,0.62)'); grd.addColorStop(1, 'rgba(0,0,0,0)');
+  bc.fillStyle = grd; bc.fillRect(0, 0, 128, 128);
+  blobTex.hasAlpha = true;
+  var blobMat = new BABYLON.StandardMaterial('blobMat', scene);
+  blobMat.diffuseTexture = blobTex; blobMat.diffuseTexture.hasAlpha = true;
+  blobMat.useAlphaFromDiffuseTexture = true;
+  blobMat.emissiveColor = BABYLON.Color3.Black();
+  blobMat.specularColor = BABYLON.Color3.Black();
+  blobMat.disableLighting = true;
+  blobMat.opacityTexture = blobTex;
+  var blob = BABYLON.MeshBuilder.CreateDisc('blob', { radius: 2.4, tessellation: 32 }, scene);
+  blob.rotation.x = Math.PI / 2; blob.position.y = 0.07; blob.material = blobMat;
+}
+
+// ---------------------------------------------------------------- the glb
+// models/waldo_game.glb is loaded and measured, because the brief said it was
+// the car. It is not: it is a 1.75 m rigged humanoid. Loaded, measured, and
+// hidden; ?glb=1 puts it beside the car so you can see for yourself.
+var GLB_INFO = null;
+BABYLON.SceneLoader.ImportMeshAsync(null, '../models/', 'waldo_game.glb', scene).then(function(res){
+  var root = res.meshes[0];
+  var bb = root.getHierarchyBoundingVectors(true);
+  var size = bb.max.subtract(bb.min);
+  GLB_INFO = {
+    min: [bb.min.x, bb.min.y, bb.min.z].map(function(v){ return +v.toFixed(3); }),
+    max: [bb.max.x, bb.max.y, bb.max.z].map(function(v){ return +v.toFixed(3); }),
+    size: [size.x, size.y, size.z].map(function(v){ return +v.toFixed(3); }),
+    meshes: res.meshes.length, nodes: res.transformNodes.length,
+    skeleton: res.skeletons.length
+  };
+  console.log('[spike] waldo_game.glb bounding box', JSON.stringify(GLB_INFO));
+  if (qb('glb', false)){
+    root.position.set(-3.1, 0, 1.2);
+    root.rotation.y = Math.PI;
+    res.meshes.forEach(function(m){ if (m.material) m.material.environmentIntensity = 1; });
+  } else {
+    res.meshes.forEach(function(m){ m.setEnabled(false); });
+  }
+  checkReady();
+}).catch(function(e){ fail('glb load', e); checkReady(); });
+
+// ---------------------------------------------------------------- SSAO2
+var ssao = null;
+if (qb('ssao', true)){
+  try {
+    ssao = new BABYLON.SSAO2RenderingPipeline('ssao', scene, { ssaoRatio: 0.5, blurRatio: 1.0 }, [camera], true);
+    ssao.totalStrength = 1.15;
+    ssao.radius = 1.1;
+    ssao.samples = 16;
+    ssao.expensiveBlur = true;
+    ssao.bilinearFiltering = BABYLON.Texture.BILINEAR_SAMPLINGMODE;
+    ssao.minZAspect = 0.2;
+    // SSAO2 renders through post-process targets, which silently turns off the
+    // canvas MSAA. Without this the mesa and car edges are stair-stepped.
+    new BABYLON.FxaaPostProcess('fxaa', 1.0, camera);
+  } catch(e){ fail('ssao', e); }
+}
+
+// ---------------------------------------------------------------- HUD
+var hud = document.getElementById('hud');
+var HUD_ON = qb('hud', true);
+hud.style.display = HUD_ON ? 'block' : 'none';
+var fpsMin = 0, fpsAcc = 0, fpsN = 0, framesSinceReady = 0;
+
+function frame(){
+  if (!window.SPIKE || !window.SPIKE.ready) return;
+  if (!window.SPIKE.firstFrameMs) window.SPIKE.firstFrameMs = Math.round(performance.now() - T_START);
+  framesSinceReady++;
+  var dt = engine.getDeltaTime();
+  if (framesSinceReady > 10){ fpsAcc += dt; fpsN++; }
+}
+
+// ---------------------------------------------------------------- boot
+var READY = false;
+function checkReady(){
+  if (READY) return;
+  if (!skyReady) return;
+  if (GLB_INFO === null) return;
+  READY = true;
+
+  scene.render();   // one synchronous frame: shaders compile, textures upload
+  var first = Math.round(performance.now() - T_START);
+  window.SPIKE = {
+    ready: true, firstFrameMs: first,
+    glb: GLB_INFO,
+    exposure: EXPOSURE, envIntensity: IBL_FACTOR,
+    engine: engine, scene: scene, camera: camera, sun: sun, csm: csm, ssao: ssao,
+    setExposure: function(v){ EXPOSURE = v; ip.exposure = v; return v; },
+    setEnv: function(v){ IBL_FACTOR = v; scene.environmentIntensity = v; return v; },
+    sunIntensityMode: sun.intensityMode,
+    fps: function(){ return engine.getFps(); },
+    info: function(){
+      var t0 = performance.now();
+      scene.render();
+      var ms = performance.now() - t0;
+      return {
+        fps: +engine.getFps().toFixed(1),
+        frameMs: +ms.toFixed(2),
+        activeMeshes: scene.getActiveMeshes().length,
+        drawCalls: scene.getEngine().getFps() ? engine._drawCalls && engine._drawCalls.current || null : null,
+        exposure: ip.exposure,
+        envIntensity: scene.environmentIntensity,
+        cameraFovDeg: +(camera.fov * 180 / Math.PI).toFixed(2),
+        canvas: [engine.getRenderWidth(), engine.getRenderHeight()]
+      };
+    },
+    look: function(x, y, z, tx, ty, tz){
+      camera.position.set(x, y, z);
+      camera.setTarget(new BABYLON.Vector3(tx, ty, tz));
+    }
+  };
+  console.log('[spike] ready in ' + first + ' ms; glb ' + JSON.stringify(GLB_INFO) +
+              '; sun intensityMode=' + sun.intensityMode + ' (3 = ILLUMINANCE)');
+  updateHud();
+}
+
+function updateHud(){
+  if (!window.SPIKE || !window.SPIKE.ready) return;
+  var s = window.SPIKE;
+  var ms = s.info().frameMs;
+  hud.textContent = [
+    'EXPOSURE  ' + ip.exposure.toFixed(6) + '   ENV ' + scene.environmentIntensity.toFixed(2),
+    'SUN       ' + SUN_LUX + ' lux @ ' + (SUN_EL * 180 / Math.PI).toFixed(0) + 'deg  az ' + (SUN_AZ * 180 / Math.PI).toFixed(0),
+    'CSM       ' + (csm ? csm.numCascades + ' cascades @ ' + csm.getShadowMap().getSize() : 'off'),
+    'FPS       ' + s.fps().toFixed(1) + '   frame ' + ms.toFixed(1) + ' ms',
+    'CARS      1   rocks ' + ROCKS + '   mesas ' + mesaDefs.length
+  ].join('\n');
+}
+setInterval(updateHud, 500);
+
+engine.runRenderLoop(function(){
+  scene.render();
+  frame();
+});
+window.addEventListener('resize', function(){ engine.resize(); });
+
+// a slow inspection orbit, off by default so screenshots are deterministic
+if (qb('orbit', false)){
+  var orbT = 0;
+  scene.onBeforeRenderObservable.add(function(){
+    orbT += engine.getDeltaTime() / 1000;
+    var r = 9.2, a = Math.sin(orbT * 0.12) * 0.5;
+    camera.position.set(Math.sin(a) * r - 1.2, 2.0, -Math.cos(a) * r);
+    camera.setTarget(new BABYLON.Vector3(0, 1.05, 3));
+  });
+}
+})();
+</script>
+</body>
+</html>
