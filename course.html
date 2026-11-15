@@ -137,10 +137,14 @@ torch.shadow.mapSize.set(512, 512);
 torch.shadow.bias = -0.0015;
 torch.shadow.normalBias = 0.04;
 camera.add(torch); camera.add(torch.target); scene.add(camera);
-// The fill used to be orange enough that the blue channel of the ground came
-// out at 32 of 255 against a reference photo's 45, which is what made the
-// plain read as painted clay. A dusty sky bounces neutral light, not amber.
-scene.add(new THREE.HemisphereLight(0xffcfae, 0x322a26, 0.30));
+// The light budget is the whole difference between this and the photograph.
+// Measured on the same framing: the reference's ground band runs a 16.6 to 1
+// ratio between its lit tenth and its shadowed tenth, with the shadow at
+// (9,9,3) and the lit ground at (187,134,88). This build ran 2.3 to 1 with the
+// shadow at (99,68,18), because a hemisphere fill was carrying a third of the
+// light and filling every crevice. Contrast is bought by taking ambient away.
+// What is left is the sky's own bounce: cool, and small.
+scene.add(new THREE.HemisphereLight(0xa8bccd, 0x2a2320, 0.09));
 
 // ---------------------------------------------------------------- sunset
 // The yard is baked at night, so the bake is treated as ambient occlusion and
@@ -237,7 +241,9 @@ new THREE.TextureLoader().load('models/tex/sky_sunset.jpg', function(t){
 // triplanar yard shaders too. A cheap emissive tint on the car stands in for sky
 // bounce, costs nothing, and cannot break a shader.
 
-var sun = new THREE.DirectionalLight(0xffe0c8, 0.98);
+// the sun carries the frame now, so it has to be the colour of low sun: the
+// reference's lit ground is (187,134,88), a warmth of +99 in R-B
+var sun = new THREE.DirectionalLight(0xffdcae, 1.30);
 sun.position.copy(SUN_DIR).multiplyScalar(150);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -962,8 +968,14 @@ var MODE = 'foot';
   // warm fill from above and behind, roughly where the sky would bounce off the
   // ground behind the car, so the body reads as paint instead of a silhouette.
   // It travels with the car (child of the car group) so there is no cost to it.
-  var chaseFill = new THREE.PointLight(0xffd9b8, 9.0, 22, 2);
-  chaseFill.position.set(0, 3.4, 6.4);
+  // This is a cheat light: it exists so the back of the car is not a
+  // silhouette. At 9.0 with a 22 m range it was also the dominant light on the
+  // ground for twenty metres around the car, which flattened every shadow in
+  // the frame and held the lit to shadow ratio at 2.3 to 1 where a photograph
+  // of the same shot measures 16.6. Small and close now, so it kisses the car
+  // and nothing else.
+  var chaseFill = new THREE.PointLight(0xffd9b8, 2.4, 8.0, 2);
+  chaseFill.position.set(0, 2.4, 4.2);
   g.add(chaseFill);
   var carKey = new THREE.DirectionalLight(0xffcfa0, 0.55);
   carKey.position.set(-3.5, 4.0, 5.0);
@@ -2349,8 +2361,8 @@ var POST = (function(){
       tDiffuse:{value:null}, tBloom:{value:null},
       tDepth:{value:null}, uRes:{value:new THREE.Vector2(1,1)},
       uAO:{value:0.90}, uNear:{value:0.05}, uFar:{value:300}, uProj:{value:800},
-      uTime:{value:0}, uBloom:{value:0.42}, uExposure:{value:0.96},
-      uGrain:{value:0.010}, uVig:{value:0.45}, uCA:{value:0.0022},
+      uTime:{value:0}, uBloom:{value:0.30}, uExposure:{value:1.02},
+      uGrain:{value:0.010}, uVig:{value:0.45}, uCA:{value:0.0008},
       uToe:{value:0.10}, uShoulder:{value:0.55}, uSat:{value:1.05}
     },
     vertexShader: vert,
