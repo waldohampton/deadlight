@@ -124,7 +124,7 @@ scene.background = new THREE.Color(0x1a1520);
 // exponential fog ate everything past 150 m, so the mesas came out the same
 // colour as the haze. Linear fog keeps the near field clear and lands the haze
 // at a distance that is chosen rather than implied.
-scene.fog = new THREE.Fog(0x8f8a76, 90, 620);
+scene.fog = new THREE.Fog(0x9e8566, 90, 620);
 
 var camera = new THREE.PerspectiveCamera(64, window.innerWidth/window.innerHeight, 0.12, 1400);
 camera.rotation.order = 'YXZ';
@@ -137,7 +137,10 @@ torch.shadow.mapSize.set(512, 512);
 torch.shadow.bias = -0.0015;
 torch.shadow.normalBias = 0.04;
 camera.add(torch); camera.add(torch.target); scene.add(camera);
-scene.add(new THREE.HemisphereLight(0xffb27a, 0x2a1d18, 0.38));
+// The fill used to be orange enough that the blue channel of the ground came
+// out at 32 of 255 against a reference photo's 45, which is what made the
+// plain read as painted clay. A dusty sky bounces neutral light, not amber.
+scene.add(new THREE.HemisphereLight(0xffcfae, 0x322a26, 0.30));
 
 // ---------------------------------------------------------------- sunset
 // The yard is baked at night, so the bake is treated as ambient occlusion and
@@ -160,7 +163,7 @@ var skyMat = new THREE.ShaderMaterial({
     // from. The elevation is already close (11.9 deg against 11.9), which is why
     // SUN_DIR's y went from 0.20 to 0.248: that is the photo's sun height.
     uSkyYaw: {value: 0.2479},
-    uSkyGain: {value: 1.0}
+    uSkyGain: {value: 1.5}
   },
   vertexShader: [
     'varying vec3 vDir;',
@@ -191,6 +194,14 @@ var skyMat = new THREE.ShaderMaterial({
     // graded by the same film pass as everything else rather than bypassing it
     '    c = pow(p, vec3(2.2)) * uSkyGain;',
     '  }',
+    // A dry desert evening is not a clean blue dome. The reference frame has a
+    // pale warm grey at the top of frame and an orange band at the horizon, and
+    // the photographed sky has blue there instead, so the photo is pulled
+    // toward dust: warm orange low, pale grey high, strongest near the ground.
+    '  float el = clamp(d.y, 0.0, 1.0);',
+    '  float hb = smoothstep(0.0, 0.85, el);',
+    '  vec3 hazeC = mix(vec3(0.62, 0.30, 0.12), vec3(0.42, 0.46, 0.50), hb);',
+    '  c = mix(c, hazeC, mix(0.76, 0.30, hb));',
     '  float s = max(dot(d, normalize(uSun)), 0.0);',
     '  c += uSunCol * pow(s, 900.0) * 2.0;',
     '  c += uSunCol * pow(s, 6.0) * 0.05;',
@@ -226,7 +237,7 @@ new THREE.TextureLoader().load('models/tex/sky_sunset.jpg', function(t){
 // triplanar yard shaders too. A cheap emissive tint on the car stands in for sky
 // bounce, costs nothing, and cannot break a shader.
 
-var sun = new THREE.DirectionalLight(0xffa858, 0.88);
+var sun = new THREE.DirectionalLight(0xffe0c8, 0.98);
 sun.position.copy(SUN_DIR).multiplyScalar(150);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -1389,7 +1400,7 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
                    'concrete_col','concrete_nrm','concrete_rgh',
                    'metal_col','metal_nrm','metal_rgh',
                    'ground_col','ground_nrm','ground_rgh','pebble_col',
-                   'gravel_col'];
+                   'gravel_col','road_col','road_nrm','road_rgh'];
   var texLeft = TEX_FILES.length;
   TEX_FILES.forEach(function(f){
     new THREE.TextureLoader().load('models/tex/' + f + '.jpg', function(t){
@@ -1523,7 +1534,12 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
           '  gMid = clamp(gMid / max(uGMidMean, vec3(0.02)), vec3(0.40), vec3(2.2));',
           '  float gMidFade = 1.0 - smoothstep(70.0, 210.0, distance(cameraPosition, vGPos));',
           '  diffuseColor.rgb *= gCol * mix(vec3(1.0), gDet, uGDetAmt * gFade);',
-          '  diffuseColor.rgb *= mix(vec3(1.0), gMid, uGMidAmt * gMidFade);'
+          '  diffuseColor.rgb *= mix(vec3(1.0), gMid, uGMidAmt * gMidFade);',
+          // the detail and middle layers are photographs of warm sand, so they
+          // put back the hue that the desat above took out of the macro. Pull
+          // the saturation from the finished albedo, once, at the end.
+          '  float gLa = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));',
+          '  diffuseColor.rgb = mix(vec3(gLa), diffuseColor.rgb, uGDesat);'
         ].join('\n'))
         .replace('#include <roughnessmap_fragment>', [
           '#include <roughnessmap_fragment>',
@@ -1583,7 +1599,7 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
     // tile mips down to one average colour.
     if (apronMat && YTEX.ground_col){
       photoground(apronMat, YTEX.ground_col, YTEX.ground_rgh, YTEX.ground_nrm,
-                  YTEX.pebble_col, 0.025, 0.385, 0.55, 0xa8a093, 0.9, 0.55,
+                  YTEX.pebble_col, 0.025, 0.385, 0.55, 0x8a8a8c, 0.9, 0.88,
                   0.70, 0.085);
     }
 
@@ -1600,16 +1616,19 @@ new THREE.GLTFLoader().load('bakenight/night.glb', function(gltf){
                       0.50, 0.12);
           return;
         }
-        var col = YTEX.asphalt_col.clone(); col.needsUpdate = true; col.repeat.set(1, 1);
-        var rgh = YTEX.asphalt_rgh.clone(); rgh.needsUpdate = true; rgh.repeat.set(1, 1);
-        var nrm = YTEX.asphalt_nrm ? YTEX.asphalt_nrm.clone() : null;
+        // a dirt track, not asphalt. The reference frame's road is bare brown
+        // earth with ruts in it, and a grey riband down the middle of a desert
+        // is the single thing that read as a game road rather than a track.
+        var col = (YTEX.road_col || YTEX.asphalt_col).clone(); col.needsUpdate = true; col.repeat.set(1, 1);
+        var rgh = (YTEX.road_rgh || YTEX.asphalt_rgh).clone(); rgh.needsUpdate = true; rgh.repeat.set(1, 1);
+        var nrm = (YTEX.road_nrm || YTEX.asphalt_nrm) ? (YTEX.road_nrm || YTEX.asphalt_nrm).clone() : null;
         if (nrm){ nrm.needsUpdate = true; nrm.repeat.set(1, 1); }
         t.mat.map = col;
         t.mat.roughnessMap = rgh;
         t.mat.normalMap = nrm;
         t.mat.normalScale.set(t.kind === 'road' ? 0.85 : 0.6,
                               t.kind === 'road' ? 0.85 : 0.6);
-        t.mat.color = new THREE.Color(t.kind === 'road' ? 0x82827d : 0xb08a5c);
+        t.mat.color = new THREE.Color(t.kind === 'road' ? 0xa8896a : 0xb08a5c);
         t.mat.metalness = 0.0;
         t.mat.roughness = 1.0;
         t.mat.needsUpdate = true;
@@ -2330,15 +2349,16 @@ var POST = (function(){
       tDiffuse:{value:null}, tBloom:{value:null},
       tDepth:{value:null}, uRes:{value:new THREE.Vector2(1,1)},
       uAO:{value:0.90}, uNear:{value:0.05}, uFar:{value:300}, uProj:{value:800},
-      uTime:{value:0}, uBloom:{value:0.55}, uExposure:{value:1.04},
-      uGrain:{value:0.009}, uVig:{value:0.45}, uCA:{value:0.0022}
+      uTime:{value:0}, uBloom:{value:0.42}, uExposure:{value:0.96},
+      uGrain:{value:0.010}, uVig:{value:0.45}, uCA:{value:0.0022},
+      uToe:{value:0.10}, uShoulder:{value:0.55}, uSat:{value:1.05}
     },
     vertexShader: vert,
     fragmentShader: [
       'uniform sampler2D tDiffuse; uniform sampler2D tBloom;',
       'uniform sampler2D tDepth; uniform vec2 uRes;',
       'uniform float uAO, uNear, uFar, uProj;',
-      'uniform float uTime, uBloom, uExposure, uGrain, uVig, uCA;',
+      'uniform float uTime, uBloom, uExposure, uGrain, uVig, uCA, uToe, uShoulder, uSat;',
       'varying vec2 vUv;',
       // linear view depth from the depth buffer, so occlusion is judged in
       // metres instead of in the hyperbolic depth that WebGL stores
@@ -2369,11 +2389,13 @@ var POST = (function(){
       '  c += texture2D(tBloom, uv).rgb * uBloom;',
       '  c *= uExposure;',
       '  c = aces(c);',
+      '  c = max(c - uToe, vec3(0.0)) / max(1.0 - uToe, 0.001);',
+      '  c = c * (1.0 - uShoulder * smoothstep(0.30, 1.0, c));',
       '  float l = dot(c, vec3(0.2126,0.7152,0.0722));',
       '  vec3 cool = c * vec3(0.94, 0.96, 1.05) + vec3(0.006, 0.004, 0.012);',
-      '  vec3 warm = c * vec3(1.16, 1.02, 0.83) + vec3(0.016, 0.008, 0.0);',
+      '  vec3 warm = c * vec3(1.05, 1.00, 0.95) + vec3(0.008, 0.005, 0.0);',
       '  c = mix(cool, warm, 0.15 + 0.85 * smoothstep(0.03, 0.62, l));',
-      '  c = mix(vec3(l), c, 1.05);',
+      '  c = mix(vec3(l), c, uSat);',
       '  c = clamp(c, 0.0, 1.0);',
       '  c = mix(c, c * c * (3.0 - 2.0 * c), 0.45);',
       '  c *= 1.0 - uVig * r2 * 1.5;',
@@ -2450,6 +2472,7 @@ var POST = (function(){
   }
 
   resize();
+  window.POST_UNI = compMat.uniforms;   // live tuning handle
   return { render: render, resize: resize, uniforms: compMat.uniforms };
 })();
 

@@ -829,3 +829,68 @@ What is still a render, and it is not a texture problem:
 A blind read of the frame after this pass scored it 3.5/10 for photographic.
 The material work moved the mesa from flat to real; the score is held down by
 geometry, and geometry is the next money, not more maps.
+
+## Grading to a photograph
+
+He handed over a generated still and said make it look exactly like that. The
+first thing a reference is good for is numbers, so the frame was measured rather
+than admired: luminance percentiles, and the mean colour of the sky, the horizon
+and the ground.
+
+The reference is a print, not a screen. Its first percentile is 6 of 255 and its
+99th is 178, which means black really is black and nothing in the frame reaches
+white. The build before this pass sat at 39 and 229: lifted blacks and blown
+highlights, which is the honest difference between "cinematic" and "flat".
+
+What changed in the film pass, all of it now uniforms and all of it measured
+against the reference:
+
+- **Exposure 1.04 to 0.96.** One step down.
+- **A toe at 0.10 and a shoulder at 0.55.** The toe is a subtract in linear
+  before gamma, so it takes the milk out of the shadows; the shoulder rides the
+  top so a white shirt cannot clip. This is the part that matters: it is what
+  makes the frame feel photographed rather than rendered.
+- **A saturation control** where the 1.05 mix was hard coded.
+
+Verified on the same framing, game against reference:
+
+| | mean | p1 | p50 | p95 | p99 |
+|---|---|---|---|---|---|
+| reference | 100.4 | 6 | 102 | 170 | 178 |
+| before | 120.8 | 39 | 116 | 204 | 229 |
+| after | 105.6 | 10 | 107 | 173 | 176 |
+
+Three more things had to change before the curve alone would read:
+
+1. **The sky was a clean blue dome.** A dry evening sky is dust, so the
+   photographed sky is pulled toward a haze colour: warm orange low, pale grey
+   high, and the mix fades over 0.85 of the elevation rather than snapping at
+   0.34, which had put a grey band across the top of the frame. Gain up to 1.5.
+2. **The road was asphalt.** A grey riband down the middle of a desert is the
+   thing that reads "game road". It is now `gravel_road` at 1 k, tinted to the
+   dirt it sits in.
+3. **The ground was clay orange.** The blue channel was landing at 32 of 255
+   against a reference 45, and the cause was not the albedo tint: the detail and
+   middle layers are photographs of warm sand and they were putting the hue back
+   after the macro layer had been desaturated. The saturation is now pulled off
+   the finished albedo once, at the end. The hemisphere fill also stopped being
+   amber: dust bounces neutral light.
+
+`window.POST_UNI` exposes the film uniforms so this can be tuned live instead of
+one reload per value; the ground layer amounts hang off
+`material.userData.gmid`.
+
+What is still not the photograph, in order of how much it costs the frame:
+
+1. **Shadow depth and direction.** The reference has a hard low sun and long
+   shadows that model every rock. The build has a sun at 0.98 with a soft 110 m
+   shadow box, so the shadows are short and soft and the ground has no relief to
+   cast into. Shadow cascade and a lower sun angle would do more than any
+   texture.
+2. **Dust.** The reference's road has a plume behind the car. There is no
+   particle system in the build at all.
+3. **The props.** 900 icosahedra and the marker cones read as primitives at any
+   distance, and the reference has none of them: its roadside is real rocks and
+   dry brush.
+4. **The car.** Its geometry is the biggest single tell at this framing, and it
+   is a scan with no fender flares, no amber light bar and no wide tyres.
