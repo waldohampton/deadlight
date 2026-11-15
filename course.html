@@ -124,12 +124,17 @@ scene.background = new THREE.Color(0x1a1520);
 // exponential fog ate everything past 150 m, so the mesas came out the same
 // colour as the haze. Linear fog keeps the near field clear and lands the haze
 // at a distance that is chosen rather than implied.
-scene.fog = new THREE.Fog(0x9e8566, 90, 620);
+// Haze is not a light, and it is the only thing lifting the shadow side of
+// distant geometry now that there is no ambient: a mesa 100 m out with its back
+// to the sun was rendering as a black slab. Pulling the fog in gives the air
+// something to do and puts distance between the black and the eye.
+scene.fog = new THREE.Fog(0x9e8566, 28, 340);
 
 var camera = new THREE.PerspectiveCamera(64, window.innerWidth/window.innerHeight, 0.12, 1400);
 camera.rotation.order = 'YXZ';
 
-var torch = new THREE.SpotLight(0xffe2bc, 2.4, 30, 0.66, 0.85, 1.2);
+// off in a sunlit level. Kept because the night yard still wants a torch.
+var torch = new THREE.SpotLight(0xffe2bc, 0.0, 30, 0.66, 0.85, 1.2);
 torch.position.set(0.1, -0.06, 0.1);
 torch.target.position.set(0, -0.22, -6);
 torch.castShadow = true;
@@ -137,14 +142,12 @@ torch.shadow.mapSize.set(512, 512);
 torch.shadow.bias = -0.0015;
 torch.shadow.normalBias = 0.04;
 camera.add(torch); camera.add(torch.target); scene.add(camera);
-// The light budget is the whole difference between this and the photograph.
-// Measured on the same framing: the reference's ground band runs a 16.6 to 1
-// ratio between its lit tenth and its shadowed tenth, with the shadow at
-// (9,9,3) and the lit ground at (187,134,88). This build ran 2.3 to 1 with the
-// shadow at (99,68,18), because a hemisphere fill was carrying a third of the
-// light and filling every crevice. Contrast is bought by taking ambient away.
-// What is left is the sky's own bounce: cool, and small.
-scene.add(new THREE.HemisphereLight(0xa8bccd, 0x2a2320, 0.16));
+// One light. The sun. No fill, no hemisphere, no cheat lamp on the car.
+// Everything else in the scene that used to emit is off; the sky is a backdrop
+// you can see, not a light that lights anything. A surface facing away from the
+// sun goes to near black, which is what the reference photograph does as well:
+// its shadowed ground measures (37,22,11) against a lit (146,107,80), and that
+// contrast is the entire reason it reads as sunlight rather than as renderer.
 
 // ---------------------------------------------------------------- sunset
 // The yard is baked at night, so the bake is treated as ambient occlusion and
@@ -272,7 +275,12 @@ new THREE.TextureLoader().load('models/tex/sky_sunset.jpg', function(t){
 
 // the sun carries the frame now, so it has to be the colour of low sun: the
 // reference's lit ground is (187,134,88), a warmth of +99 in R-B
-var sun = new THREE.DirectionalLight(0xffdcae, 1.30);
+// With one light and nothing else, the sun has to carry the whole exposure.
+// A low sun hits flat ground at sin(14 degrees) = 0.24 of its intensity, so the
+// number that lights a vertical face is four times the number that lights the
+// plain. 8.0 measured out to a mean of 93.9 and a median of 96 against the
+// reference frame's 100.4 and 102.
+var sun = new THREE.DirectionalLight(0xffdcae, 8.0);
 sun.position.copy(SUN_DIR).multiplyScalar(150);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -297,7 +305,10 @@ function focusSun(){
 }
 focusSun();
 
-var camFill = new THREE.PointLight(0xe0b795, 0.40, 9, 2);
+// retired: a fill light parented to the camera. It followed the viewer, so it
+// put light where the camera was pointing and nowhere else, which is the exact
+// opposite of how the sun behaves.
+var camFill = new THREE.PointLight(0xe0b795, 0.0, 9, 2);
 camFill.position.set(0, 0.2, 0.6);
 camera.add(camFill);
 
@@ -394,7 +405,7 @@ function pad(name, x, z, hw, hd, top, thick, glow){
     // the pads' glow is a night marker. In daylight it just lays six little
     // orange puddles on the ground at the edge of frame, which reads as lamps
     // left on. The emissive edge strip still shows where the pad is.
-    var gl = new THREE.PointLight(0xffc070, glow * 0.2, 5.0, 2);
+    var gl = new THREE.PointLight(0xffc070, 0.0, 5.0, 2);
     gl.position.set(0, top + 0.4, 0);
     g.add(gl);
   }
@@ -489,7 +500,7 @@ var FINISH = {x:-10.5, y:6.99, z:-12.0};
   lamp.position.set(-10.5, 7.85, -12.0); scene.add(lamp);
   var pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.85, 8), STEP_MAT);
   pole.position.set(-10.5, 7.42, -12.0); scene.add(pole);
-  var gl = new THREE.PointLight(0x86ffb0, 2.6, 12, 2);
+  var gl = new THREE.PointLight(0x86ffb0, 0.0, 12, 2);
   gl.position.set(-10.5, 7.70, -12.0); scene.add(gl);
 })();
 
@@ -1034,7 +1045,10 @@ scene.add(MARKER_GROUP);
       // The bright pale arch was the most artificial thing in the frame: real
       // desert tracks have an old gate over them, and the glow belongs on one
       // thin strip, not on the whole structure.
-      var archMat = new THREE.MeshStandardMaterial({color:0x3c2c20, roughness:0.82,
+      // With one light and no ambient, a dark albedo reads as a black hole: the
+      // side away from the sun has nothing to lift it. Rusted steel is a mid
+      // tone for that reason, and the shadow side still goes dark on its own.
+      var archMat = new THREE.MeshStandardMaterial({color:0x7d6448, roughness:0.82,
                                                     metalness:0.28});
       var stripMat = new THREE.MeshStandardMaterial({color:0x241708, emissive:0xffb04a,
                                                      emissiveIntensity:0.32, roughness:0.7});
@@ -1146,7 +1160,7 @@ var MODE = 'foot';
 
   // 7.0 laid a hot white pool thirty metres down the road in daylight, which
   // read as a flashlight rather than as headlights
-  var beam = new THREE.SpotLight(0xffe9c4, 3.2, 60, 0.72, 0.60, 0.85);
+  var beam = new THREE.SpotLight(0xffe9c4, 0.0, 60, 0.72, 0.60, 0.85);
   beam.position.set(0, 0.70, -1.90);
   beam.target.position.set(0, 0.10, -20);
   beam.castShadow = true;
@@ -1167,10 +1181,10 @@ var MODE = 'foot';
   // the frame and held the lit to shadow ratio at 2.3 to 1 where a photograph
   // of the same shot measures 16.6. Small and close now, so it kisses the car
   // and nothing else.
-  var chaseFill = new THREE.PointLight(0xffd9b8, 1.5, 13.0, 2);
+  var chaseFill = new THREE.PointLight(0xffd9b8, 0.0, 13.0, 2);
   chaseFill.position.set(0, 2.4, 4.2);
   g.add(chaseFill);
-  var carKey = new THREE.DirectionalLight(0xffcfa0, 0.55);
+  var carKey = new THREE.DirectionalLight(0xffcfa0, 0.0);
   carKey.position.set(-3.5, 4.0, 5.0);
   g.add(carKey);
   g.add(carKey.target);
@@ -1194,7 +1208,7 @@ var MODE = 'foot';
   blob.position.y = 0.035;
   g.add(blob);
 
-  var tailGlow = new THREE.PointLight(0xff2a10, 0.28, 5, 2);
+  var tailGlow = new THREE.PointLight(0xff2a10, 0.0, 5, 2);
   tailGlow.position.set(0, 0.62, 2.48);
   g.add(tailGlow);
 
@@ -1523,7 +1537,7 @@ function nearCar(){
 // edged orange pool on the ground that made the shot look lit by a flashlight.
 // The sun lights the car now; this is only here so the back of the car is not
 // a pure black hole when the sun is on the other side.
-var CAR_FILL = { inCar:{ fill:1.5, key:0.16 }, onFoot:{ fill:0.15, key:0.06 } };
+var CAR_FILL = { inCar:{ fill:0.0, key:0.0 }, onFoot:{ fill:0.0, key:0.0 } };
 function carFill(on){
   var v = on ? CAR_FILL.inCar : CAR_FILL.onFoot;
   if (CAR.fill) CAR.fill.intensity = v.fill;
@@ -2561,7 +2575,7 @@ var POST = (function(){
       uAO:{value:0.90}, uNear:{value:0.05}, uFar:{value:300}, uProj:{value:800},
       uTime:{value:0}, uBloom:{value:0.30}, uExposure:{value:1.02},
       uGrain:{value:0.010}, uVig:{value:0.45}, uCA:{value:0.0002},
-      uToe:{value:0.10}, uShoulder:{value:0.55}, uSat:{value:1.05}
+      uToe:{value:0.06}, uShoulder:{value:0.55}, uSat:{value:1.05}
     },
     vertexShader: vert,
     fragmentShader: [

@@ -930,3 +930,47 @@ stupid. He was right, and they were not decoration: they were the scrub.
 What is still wrong, and it needs a human eye on the frame rather than another
 number: the car body reads too dark and the environment map is not showing on it
 at this size in frame, and the plain still has no relief. Both are next.
+
+## One light, and it is the sun
+
+He asked for one light. There is now exactly one: a directional light at 8.0,
+colour of low sun, casting the only shadow map in the scene. Verified by
+walking the scene graph and listing every light with a non-zero intensity:
+
+    ["PointLight 0","DirectionalLight 8","PointLight 0","PointLight 0",
+     "PointLight 0","PointLight 0","PointLight 0","PointLight 0",
+     "PointLight 0","SpotLight 0","PointLight 0","DirectionalLight 0",
+     "PointLight 0","SpotLight 0"]
+
+Off, one at a time, and what each was costing:
+
+- **Hemisphere light.** Fake sky bounce at 0.16. This was the last ambient in
+  the scene and it was filling every crevice the sun left dark.
+- **Camera fill.** A point light parented to the camera at 0.40, which is the
+  single worst way to light anything: it illuminates what you look at, so no
+  object ever has a dark side.
+- **The car's chase fill and key.** Down from 9.0 originally to 0.
+- **Headlights.** A 3.2 spot laying a cone of light down the road at sunset.
+- **The yard pad lamps, the green emitter, the tail glow, the torch.** All 0.
+
+The sun went from 1.30 to 8.0 because a sun 14 degrees above the horizon only
+puts `sin(14 deg) = 0.24` of its intensity on flat ground, so the number that
+lights a vertical rock face is four times the number that lights the plain. At
+8.0 the frame measures mean 93.9 and median 96 against the reference frame's
+100.4 and 102.
+
+What one light does that ambient hid:
+
+1. **Shadow sides go dark.** That is correct, and it is the whole reason the
+   frame now reads as sunlight. The cost is that the face a mesa turns away from
+   the sun has no texture: it measures (80,71,51) against a lit face of
+   (179,168,106). Its silhouette is a flat quad, and with no ambient it stays a
+   flat quad.
+2. **Haze has to do the work ambient used to do at distance.** Fog pulled in
+   from 90-620 to 28-340 so the back of distant geometry picks up the sky's
+   haze colour. Fog is not a light; it is air.
+3. **The film toe had to come down** from 0.10 to 0.06, because a heavy toe
+   crushes exactly the shadow values that one light leaves behind.
+4. **Dark albedo reads as a hole.** The gate steel was 0x3c2c20 and rendered as
+   a black slab; it is 0x7d6448 now, which is what rusted steel looks like and
+   what survives having one side unlit.
