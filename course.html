@@ -116,6 +116,33 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, IS_TOUCH ? 1.5 : 2
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.outputEncoding = THREE.LinearEncoding;
 renderer.toneMapping = THREE.NoToneMapping;
+
+// ---------------------------------------------------------------- photometry
+// The scene is lit in real units from here on, the way Unreal and Frostbite do
+// it, instead of in numbers that were tuned by eye.
+//
+//   DirectionalLight intensity  = direct normal illuminance in LUX
+//   emissive / sky dome         = luminance in cd/m2
+//   the camera                  = one exposure value, EV100
+//
+// The maths that ties them together is the photographic one:
+//   EV100   = log2(N^2 / t)                     aperture, shutter
+//   L       = E * cos(theta) * albedo / PI      what a surface sends at you
+//   exposure= 1 / (1.2 * 2^EV100)               the multiplier before the curve
+//
+// 15,000 lux is low golden hour sun (noon is about 100,000, overcast 10,000).
+// A 0.30 albedo ground at 14 degrees elevation therefore reflects
+//   15000 * sin(14 deg) * 0.30 / PI  = 277 cd/m2
+// and EV100 11 exposes that to a proper mid tone. EV100 is the one dial an
+// artist should touch: one step is one stop.
+var SUN_LUX = 15000;
+var SKY_LUM = 900;                    // cd/m2 across the sky dome
+// Bracket it like a camera: 11.0 read mean 57.5, 10.5 read 77.5, 10.0 read
+// 88.7, 9.5 read 98.6 with a median of 99 and a 95th of 176. The reference
+// frame measured 100.4 / 102 / 170, so 9.5 is the stop this scene is exposed at.
+var EV100 = 9.5;
+var EXPOSURE = 1.0 / (1.2 * Math.pow(2, EV100));
+renderer.physicallyCorrectLights = true;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -129,6 +156,9 @@ scene.background = new THREE.Color(0x1a1520);
 // to the sun was rendering as a black slab. Pulling the fog in gives the air
 // something to do and puts distance between the black and the eye.
 scene.fog = new THREE.Fog(0x9e8566, 28, 340);
+// the haze colour is the sky's colour at that elevation, in cd/m2, so it has to
+// carry the same luminance as the dome or distance fades to black
+scene.fog.color.multiplyScalar(SKY_LUM * 0.75);
 
 var camera = new THREE.PerspectiveCamera(64, window.innerWidth/window.innerHeight, 0.12, 1400);
 camera.rotation.order = 'YXZ';
@@ -170,7 +200,8 @@ var skyMat = new THREE.ShaderMaterial({
     // from. The elevation is already close (11.9 deg against 11.9), which is why
     // SUN_DIR's y went from 0.20 to 0.248: that is the photo's sun height.
     uSkyYaw: {value: 0.2479},
-    uSkyGain: {value: 1.5}
+    uSkyGain: {value: 1.5},
+    uSkyLum: {value: 900}
   },
   vertexShader: [
     'varying vec3 vDir;',
@@ -185,7 +216,7 @@ var skyMat = new THREE.ShaderMaterial({
   ].join('\n'),
   fragmentShader: [
     'varying vec3 vDir; uniform vec3 uTop, uMid, uHor, uSun, uSunCol;',
-    'uniform sampler2D uSky; uniform float uSkyOn, uSkyYaw, uSkyGain;',
+    'uniform sampler2D uSky; uniform float uSkyOn, uSkyYaw, uSkyGain, uSkyLum;',
     'void main(){',
     '  vec3 d = normalize(vDir);',
     '  float h = clamp(d.y * 1.25 + 0.06, 0.0, 1.0);',
@@ -212,7 +243,10 @@ var skyMat = new THREE.ShaderMaterial({
     '  float s = max(dot(d, normalize(uSun)), 0.0);',
     '  c += uSunCol * pow(s, 900.0) * 2.0;',
     '  c += uSunCol * pow(s, 6.0) * 0.05;',
-    '  gl_FragColor = vec4(c, 1.0);',
+    // the dome is a light source, so it outputs luminance in cd/m2 rather than
+    // a 0..1 display colour. 900 is a bright sunset sky; the exposure then
+    // decides what that number means on screen.
+    '  gl_FragColor = vec4(c * uSkyLum, 1.0);',
     '}'
   ].join('\n')
 });
@@ -229,6 +263,28 @@ sky.position.set(0, 0, 0);
 // body answer to the sunset instead of to a flat fill. Per material, never
 // scene.environment: a scene wide environment recompiles the materials that
 // carry an onBeforeCompile patch and the level goes black.
+// Lamps and lit strips are surfaces with a luminance, not display colours, so
+// they get scaled into the same photometric space as everything else. Without
+// this the tail lights, the gate strips and the pad edges render as black at an
+// EV100 of 11, because 0.9 of a display colour is three stops under a sunlit
+// rock.
+function photometricLamps(){
+  var L = 1.0 / EXPOSURE;
+  scene.traverse(function(o){
+    if (!o.isMesh || !o.material) return;
+    var ms = Array.isArray(o.material) ? o.material : [o.material];
+    ms.forEach(function(m){
+      if (m.userData && m.userData.lampDone) return;
+      if (m.emissive && m.emissive.getHex() !== 0){
+        m.emissiveIntensity *= L; m.userData.lampDone = 1;
+      } else if (m.isMeshBasicMaterial && m.color &&
+                 (m.color.r + m.color.g + m.color.b) > 0.2){
+        m.color.multiplyScalar(L); m.userData.lampDone = 1;
+      }
+    });
+  });
+}
+
 var ENVMAP = null;
 function bakeEnv(){
   if (ENVMAP) return ENVMAP;
@@ -243,6 +299,9 @@ function bakeEnv(){
       if (!o.isMesh || !o.material) return;
       var ms = Array.isArray(o.material) ? o.material : [o.material];
       ms.forEach(function(m){
+        // metals only. Handing the environment to the patched ground and rock
+        // shaders recompiles them and they come out black, which is why a sky
+        // bounce cannot simply be switched on scene wide here.
         if (m.isMeshStandardMaterial && m.metalness >= 0.2 && !m.envMap){
           m.envMap = ENVMAP; m.envMapIntensity = 0.85; m.needsUpdate = true; n++;
         }
@@ -280,7 +339,7 @@ new THREE.TextureLoader().load('models/tex/sky_sunset.jpg', function(t){
 // number that lights a vertical face is four times the number that lights the
 // plain. 8.0 measured out to a mean of 93.9 and a median of 96 against the
 // reference frame's 100.4 and 102.
-var sun = new THREE.DirectionalLight(0xffdcae, 8.0);
+var sun = new THREE.DirectionalLight(0xffdcae, SUN_LUX);
 sun.position.copy(SUN_DIR).multiplyScalar(150);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -2573,7 +2632,7 @@ var POST = (function(){
       tDiffuse:{value:null}, tBloom:{value:null},
       tDepth:{value:null}, uRes:{value:new THREE.Vector2(1,1)},
       uAO:{value:0.90}, uNear:{value:0.05}, uFar:{value:300}, uProj:{value:800},
-      uTime:{value:0}, uBloom:{value:0.30}, uExposure:{value:1.02},
+      uTime:{value:0}, uBloom:{value:0.30}, uExposure:{value:EXPOSURE},
       uGrain:{value:0.010}, uVig:{value:0.45}, uCA:{value:0.0002},
       uToe:{value:0.06}, uShoulder:{value:0.55}, uSat:{value:1.05}
     },
@@ -2975,7 +3034,7 @@ window.addEventListener('resize', function(){
 
 // bake the sky into the environment map once everything that wants it exists.
 // Delayed rather than done inline because the glb and the sky jpeg land later.
-setTimeout(function(){ bakeEnv(); }, 2200);
+setTimeout(function(){ photometricLamps(); bakeEnv(); }, 2200);
 
 window.COURSE = {
   TUNE: TUNE,

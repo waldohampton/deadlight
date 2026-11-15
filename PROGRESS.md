@@ -974,3 +974,64 @@ What one light does that ambient hid:
 4. **Dark albedo reads as a hole.** The gate steel was 0x3c2c20 and rendered as
    a black slab; it is 0x7d6448 now, which is what rusted steel looks like and
    what survives having one side unlit.
+
+## Real units, and a camera instead of a magic number
+
+"The lighting is all wrong" was right. It was wrong in a specific way: every
+number in the light rig was invented. A sun of 8.0, an ambient of 0.16, a fill
+of 1.5, an exposure of 1.02. None of them meant anything, so none of them could
+be reasoned about or compared to a photograph.
+
+Engines that get this right do not tune brightness. They carry three kinds of
+number, and Unreal's documentation states them plainly: a Directional Light is
+**direct normal illuminance in lux**, a Sky Light and emissives are **luminance
+in cd/m2**, and the camera is **one exposure value, EV100**. Everything else
+falls out of the photographic maths:
+
+    EV100    = log2(N^2 / t)                      aperture and shutter
+    exposure = 1 / (1.2 * 2^EV100)                the multiplier before the curve
+    L        = E * cos(theta) * albedo / PI       what a surface sends to the eye
+
+So the rig is:
+
+| thing | value | unit | why |
+|---|---|---|---|
+| sun | 15,000 | lux | low golden hour; noon is ~100,000, overcast ~10,000 |
+| sky dome | 900 | cd/m2 | a bright sunset sky is a light source, not wallpaper |
+| haze | sky colour * 675 | cd/m2 | it is air in front of the sun, so it shares the units |
+| ground albedo | 0.25-0.35 | linear | desert soil; bare dark rock is 0.05-0.15, dry scrub 0.08-0.2 |
+| camera | EV100 9.5 | stops | one dial, one step is one stop |
+
+`renderer.physicallyCorrectLights = true` is what makes the lux a lux. Without
+it the number is a multiplier and the whole exercise is theatre.
+
+Calibration, because that is what a camera is: bracketed EV100 11.0, 10.5, 10.0,
+9.5 and measured each frame against the reference photograph.
+
+| EV100 | mean | median | 95th |
+|---|---|---|---|
+| 11.0 | 57.5 | 48 | 130 |
+| 10.5 | 77.5 | 72 | 159 |
+| 10.0 | 88.7 | 86 | 170 |
+| 9.5 | 98.6 | 99 | 176 |
+| reference | 100.4 | 102 | 170 |
+
+Lamps have to be brought into the same space or they go black: at EV100 9.5 a
+display colour of 0.9 is nearly four stops under a sunlit rock face, so every
+emissive and every lamp material is scaled by `1 / exposure` once at load.
+
+What this exposed, and it is the real answer to "how do you make light look
+real":
+
+1. **A single sun is not how outdoors works.** Real light is sun + sky dome +
+   air. The sky's contribution to a surface is roughly `PI * L_sky` of
+   irradiance, which is why a shadowed rock still shows its texture in the
+   reference photograph. Games do this with a SkyLight / sky IBL, and with
+   height fog, not with one directional light and a hope.
+2. **Handing the environment map to the patched ground and rock shaders renders
+   them black**, so the sky bounce cannot be switched on scene wide until those
+   shaders are fixed. It is on the metal only. That is the next engineering job,
+   and until it is done the unlit side of the mesa is a flat dark quad with no
+   rock in it.
+3. **Shadow softness should come from the sun's angular size** (0.53 degrees),
+   not from a PCF blur radius. Ours is a blur.
